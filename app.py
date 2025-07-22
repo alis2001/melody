@@ -7,6 +7,12 @@ import librosa
 import soundfile as sf
 import time
 import requests
+import sys
+import signal
+import gc
+import atexit
+from contextlib import contextmanager
+import weakref
 from flask_cors import CORS
 from flask import Flask, render_template, request, jsonify, redirect, url_for, session
 from flask_socketio import SocketIO, emit, join_room
@@ -15,6 +21,86 @@ from pyannote.audio import Inference
 import ollama
 from threading import Lock
 from datetime import timedelta
+from dotenv import load_dotenv
+
+# Import psutil for memory monitoring
+try:
+    import psutil
+except ImportError:
+    print("psutil not installed - memory monitoring disabled")
+    psutil = None
+
+load_dotenv()
+
+###############################
+#  MEMORY AND RESOURCE MANAGEMENT
+###############################
+
+# Global cleanup registry
+cleanup_registry = weakref.WeakSet()
+
+def force_gc():
+    """Force garbage collection and memory cleanup"""
+    gc.collect()
+    # Force malloc to release memory back to OS
+    try:
+        import ctypes
+        libc = ctypes.CDLL("libc.so.6")
+        libc.malloc_trim(0)
+    except:
+        pass
+
+def log_memory_usage(operation=""):
+    """Log current memory usage"""
+    if psutil:
+        process = psutil.Process()
+        memory_mb = process.memory_info().rss / 1024 / 1024
+        memory_percent = process.memory_percent()
+        print(f"[MEMORY] {operation}: {memory_mb:.1f} MB ({memory_percent:.1f}%)")
+        return memory_mb
+    return 0
+
+@contextmanager
+def memory_monitor(operation_name):
+    """Context manager to monitor memory usage during operations"""
+    mem_before = log_memory_usage(f"{operation_name} START")
+    try:
+        yield
+    finally:
+        mem_after = log_memory_usage(f"{operation_name} END")
+        if psutil:
+            mem_diff = mem_after - mem_before
+            if mem_diff > 100:  # Log if more than 100MB increase
+                print(f"WARNING: {operation_name} used {mem_diff:.1f}MB memory")
+
+# Signal handlers for graceful shutdown
+def signal_handler(signum, frame):
+    """Handle shutdown signals gracefully"""
+    print(f"Received signal {signum}, shutting down gracefully...")
+    
+    # Clean up all sessions
+    with sessions_lock:
+        for matricola in list(sessions.keys()):
+            cleanup_session(matricola)
+    
+    # Remove temporary files
+    try:
+        remove_temp_wavs(WAV_DIRECTORY)
+    except:
+        pass
+    
+    # Force final garbage collection
+    force_gc()
+    
+    # Exit
+    sys.exit(0)
+
+# Register signal handlers
+signal.signal(signal.SIGTERM, signal_handler)
+signal.signal(signal.SIGINT, signal_handler)
+
+# Register cleanup function for normal exit
+atexit.register(lambda: signal_handler(0, None))
 
 ###############################
 #  Configuration & Globals
@@ -43,11 +129,23 @@ os.makedirs(SESSION_REPORTS_DIR, exist_ok=True)
 os.makedirs(SESSION_TRANSCRIPTS_DIR, exist_ok=True)
 
 def remove_temp_wavs(directory):
-    for f in os.listdir(directory):
-        if f.endswith(".wav"):
-            os.remove(os.path.join(directory, f))
-    print(f"Cleared old .wav files in {directory}")
+    """Remove temporary wav files with error handling"""
+    try:
+        count = 0
+        for f in os.listdir(directory):
+            if f.endswith(".wav"):
+                file_path = os.path.join(directory, f)
+                try:
+                    os.remove(file_path)
+                    count += 1
+                except Exception as e:
+                    print(f"Error removing {file_path}: {e}")
+        if count > 0:
+            print(f"Cleared {count} old .wav files in {directory}")
+    except Exception as e:
+        print(f"Error cleaning directory {directory}: {e}")
 
+# Initial cleanup
 remove_temp_wavs(WAV_DIRECTORY)
 
 file_lock = Lock()
@@ -56,14 +154,18 @@ sessions_lock = Lock()
 # Sessions dictionary keyed by matricola (doctor's ID)
 sessions = {}  # key: matricola, value: session data dictionary
 
+# Track browser connections
+active_connections = {}  # key: matricola, value: {'sid': sid, 'last_seen': timestamp}
+
 embedding_inference = None
 print(f"Loading Vosk model from: {MODEL_PATH}")
 vosk_model = Model(MODEL_PATH)
-
+log_memory_usage("After Vosk model load")
 
 ###############################
-#  Session Validation Functions (ADD THESE NEW FUNCTIONS)
+#  ENHANCED SESSION MANAGEMENT
 ###############################
+
 def is_valid_session(matricola):
     """Check if a session is valid and not expired"""
     if not matricola:
@@ -80,78 +182,126 @@ def is_valid_session(matricola):
         
         session_data = sessions[matricola]
         created_at = session_data.get("created_at", 0)
-        if time.time() - created_at > 6 * 3600:  # 6 hours
+        # Reduced session timeout to 4 hours instead of 6
+        if time.time() - created_at > 4 * 3600:
             return False
     
     return True
 
 def cleanup_session(matricola):
-    """Clean up a specific session"""
+    """Enhanced session cleanup with memory management"""
+    print(f"Starting cleanup for session {matricola}")
+    
     with sessions_lock:
         if matricola in sessions:
             session_data = sessions[matricola]
-            try:
-                tf = session_data.get("transcript_file")
-                if tf and os.path.exists(tf):
-                    os.remove(tf)
-                    print(f"Deleted transcript: {tf}")
-            except Exception as e:
-                print(f"Error deleting transcript for {matricola}:", e)
             
+            # Close and clean transcript file
+            try:
+                transcript_file = session_data.get("transcript_file")
+                if transcript_file and os.path.exists(transcript_file):
+                    os.remove(transcript_file)
+                    print(f"Deleted transcript: {transcript_file}")
+            except Exception as e:
+                print(f"Error deleting transcript for {matricola}: {e}")
+            
+            # Clean up recognizer object
+            try:
+                if 'recognizer' in session_data:
+                    del session_data['recognizer']
+            except:
+                pass
+                
+            # Clean up audio buffer
+            session_data['audio_buffer'] = b""
+            
+            # Clean up embeddings
+            try:
+                if 'default_emb' in session_data:
+                    del session_data['default_emb']
+            except:
+                pass
+            
+            # Remove from sessions
             del sessions[matricola]
-            print(f"Session cleaned up for matricola: {matricola}")
-
-# Track browser connections (ADD THIS GLOBAL VARIABLE)
-active_connections = {}  # key: matricola, value: {'sid': sid, 'last_seen': timestamp}
-
+    
+    # Clean up from active connections
+    if matricola in active_connections:
+        del active_connections[matricola]
+    
+    # Force memory cleanup
+    force_gc()
+    log_memory_usage(f"After cleanup session {matricola}")
+    print(f"Session cleaned up for matricola: {matricola}")
 
 ###############################
 #  Utility Functions
 ###############################
 def trim_audio(wav_file, top_db=30):
     try:
-        audio, sr = librosa.load(wav_file, sr=SAMPLE_RATE)
-        trimmed_audio, _ = librosa.effects.trim(audio, top_db=top_db)
-        trimmed_file = wav_file.replace(".wav", "_trim.wav")
-        sf.write(trimmed_file, trimmed_audio, sr)
-        return trimmed_file
+        with memory_monitor("audio_trim"):
+            audio, sr = librosa.load(wav_file, sr=SAMPLE_RATE)
+            trimmed_audio, _ = librosa.effects.trim(audio, top_db=top_db)
+            trimmed_file = wav_file.replace(".wav", "_trim.wav")
+            sf.write(trimmed_file, trimmed_audio, sr)
+            # Clean up audio data from memory
+            del audio, trimmed_audio
+            return trimmed_file
     except Exception as e:
         print(f"Error trimming {wav_file}: {e}")
         return wav_file
 
 def get_embedding(embedding_inference_local, wav_file):
-    trimmed_file = trim_audio(wav_file)
-    emb = embedding_inference_local(trimmed_file)
-    if emb.ndim == 2:
-        emb = np.mean(emb, axis=0)
-    if trimmed_file != wav_file and os.path.exists(trimmed_file):
-        os.remove(trimmed_file)
-    return emb
+    try:
+        with memory_monitor("get_embedding"):
+            trimmed_file = trim_audio(wav_file)
+            emb = embedding_inference_local(trimmed_file)
+            if emb.ndim == 2:
+                emb = np.mean(emb, axis=0)
+            
+            # Clean up trimmed file
+            if trimmed_file != wav_file and os.path.exists(trimmed_file):
+                try:
+                    os.remove(trimmed_file)
+                except:
+                    pass
+            
+            return emb
+    except Exception as e:
+        print(f"Error getting embedding: {e}")
+        raise
 
 def assign_speaker(embedding, default_embedding, threshold=THRESHOLD):
-    sim_val = (
-        np.dot(embedding, default_embedding) /
-        (np.linalg.norm(embedding) * np.linalg.norm(default_embedding))
-    )
-    print(f"Computed similarity: {sim_val:.3f}")
-    return (0 if sim_val >= threshold else 1), sim_val
+    try:
+        sim_val = (
+            np.dot(embedding, default_embedding) /
+            (np.linalg.norm(embedding) * np.linalg.norm(default_embedding))
+        )
+        print(f"Computed similarity: {sim_val:.3f}")
+        return (0 if sim_val >= threshold else 1), sim_val
+    except Exception as e:
+        print(f"Error in assign_speaker: {e}")
+        return (0, 0.0)  # Default to doctor
 
 def estrai_conversazione_medica(transcript_file):
     if not os.path.exists(transcript_file):
         return ""
     lines = []
-    with open(transcript_file, "r", encoding="utf-8") as f:
-        for line in f:
-            line = line.strip()
-            if "Dottore:" in line or "Paziente:" in line:
-                parts = line.split("|", 1)
-                if len(parts) > 1:
-                    content = parts[1].strip()
-                    details = content.split(":", 2)
-                    if len(details) >= 3:
-                        speaker = details[1].strip()
-                        text = details[2].strip()
-                        lines.append(f"{speaker}: {text}")
+    try:
+        with open(transcript_file, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if "Dottore:" in line or "Paziente:" in line:
+                    parts = line.split("|", 1)
+                    if len(parts) > 1:
+                        content = parts[1].strip()
+                        details = content.split(":", 2)
+                        if len(details) >= 3:
+                            speaker = details[1].strip()
+                            text = details[2].strip()
+                            lines.append(f"{speaker}: {text}")
+    except Exception as e:
+        print(f"Error reading transcript {transcript_file}: {e}")
     return "\n".join(lines)
 
 def genera_report_medico(transcript_file):
@@ -171,43 +321,79 @@ def genera_report_medico(transcript_file):
     except Exception as e:
         return f"Errore di connessione al servizio locale: {e}"
 
-
-
 def process_sentence_and_emit(matricola, sid, wav_filename, sentence):
-    with sessions_lock:
-        session_data = sessions.get(matricola)
-    if not session_data:
-        print("Session data not found for matricola", matricola)
-        return
-    default_emb = session_data["default_emb"]
-    transcript_file = session_data["transcript_file"]
-
-    similarity = 0.0
-    try:
-        audio, sr = librosa.load(wav_filename, sr=SAMPLE_RATE)
-        duration = len(audio) / SAMPLE_RATE
-    except Exception as e:
-        print(f"Error loading {wav_filename}: {e}")
-        duration = 0
-
-    if duration < MIN_DURATION:
-        print(f"Audio too short ({duration:.2f}s); fallback => Dottore")
-        voice = "Dottore"
-    else:
+    """Enhanced audio processing with memory management"""
+    
+    with memory_monitor(f"process_sentence_{matricola}"):
+        with sessions_lock:
+            session_data = sessions.get(matricola)
+        
+        if not session_data:
+            print("Session data not found for matricola", matricola)
+            return
+        
         try:
-            emb = get_embedding(embedding_inference, wav_filename)
-            voice_label, similarity = assign_speaker(emb, default_emb)
-            voice = "Dottore" if voice_label == 0 else "Paziente"
-        except Exception as e:
-            print("Error in diarization:", e)
-            voice = "Dottore"
+            default_emb = session_data["default_emb"]
+            transcript_file = session_data["transcript_file"]
 
-    line = f"Similarity: {similarity:.3f} | {os.path.basename(wav_filename)}: {voice}: {sentence}"
-    print("Appending line to transcript:", line)
-    with file_lock:
-        with open(transcript_file, "a", encoding="utf-8") as f:
-            f.write(line + "\n")
-    socketio.emit("final_result", {"line": line}, room=sid)
+            similarity = 0.0
+            
+            # Load and process audio with resource monitoring
+            try:
+                audio, sr = librosa.load(wav_filename, sr=SAMPLE_RATE)
+                duration = len(audio) / SAMPLE_RATE
+                # Clean up audio data immediately
+                del audio
+            except Exception as e:
+                print(f"Error loading {wav_filename}: {e}")
+                duration = 0
+            finally:
+                # Always clean up the temporary file
+                try:
+                    if os.path.exists(wav_filename):
+                        os.remove(wav_filename)
+                except:
+                    pass
+
+            if duration < MIN_DURATION:
+                print(f"Audio too short ({duration:.2f}s); fallback => Dottore")
+                voice = "Dottore"
+            else:
+                try:
+                    with memory_monitor("embedding_inference"):
+                        emb = get_embedding(embedding_inference, wav_filename)
+                        voice_label, similarity = assign_speaker(emb, default_emb)
+                        voice = "Dottore" if voice_label == 0 else "Paziente"
+                        
+                        # Clean up embedding from memory
+                        del emb
+                        
+                except Exception as e:
+                    print("Error in diarization:", e)
+                    voice = "Dottore"
+
+            # Write to transcript with file locking
+            line = f"Similarity: {similarity:.3f} | {os.path.basename(wav_filename)}: {voice}: {sentence}"
+            print("Appending line to transcript:", line)
+            
+            with file_lock:
+                try:
+                    with open(transcript_file, "a", encoding="utf-8") as f:
+                        f.write(line + "\n")
+                        f.flush()  # Force write to disk
+                except Exception as e:
+                    print(f"Error writing to transcript: {e}")
+            
+            # Emit result
+            socketio.emit("final_result", {"line": line}, room=sid)
+            
+        except Exception as e:
+            print(f"Error in process_sentence_and_emit: {e}")
+        finally:
+            # Periodic memory cleanup
+            session_count = len(sessions) if sessions else 0
+            if session_count > 0 and session_count % 10 == 0:  # Every 10 processed sentences
+                force_gc()
 
 ###############################
 #  SOCKET.IO HANDLERS
@@ -216,6 +402,8 @@ def process_sentence_and_emit(matricola, sid, wav_filename, sentence):
 def handle_connect(auth):
     sid = request.sid
     print(f"[CONNECT] sid={sid}, auth={auth}")
+    log_memory_usage("Socket connect")
+    
     matricola = auth.get("matricola", "").strip()
     if not matricola:
         emit("error", {"message": "Matricola is required."})
@@ -235,9 +423,12 @@ def handle_connect(auth):
 
     global embedding_inference
     if embedding_inference is None:
-        embedding_inference = Inference("pyannote/embedding", window="whole", use_auth_token=hf_token)
+        with memory_monitor("loading_embedding_inference"):
+            embedding_inference = Inference("pyannote/embedding", window="whole", use_auth_token=hf_token)
+    
     try:
-        default_emb = get_embedding(embedding_inference, voice_file)
+        with memory_monitor("loading_voice_embedding"):
+            default_emb = get_embedding(embedding_inference, voice_file)
     except Exception as e:
         emit("error", {"message": f"Error loading voice model: {str(e)}"})
         return
@@ -250,8 +441,12 @@ def handle_connect(auth):
             session_id = f"{matricola}_{int(time.time())}"
             transcript_file = os.path.join(SESSION_TRANSCRIPTS_DIR, f"{session_id}.txt")
 
-            with open(transcript_file, "w", encoding="utf-8") as f:
-                f.write("")
+            try:
+                with open(transcript_file, "w", encoding="utf-8") as f:
+                    f.write("")
+            except Exception as e:
+                emit("error", {"message": f"Error creating transcript file: {str(e)}"})
+                return
 
             sessions[matricola] = {
                 "sid": sid,
@@ -291,75 +486,109 @@ def handle_disconnect():
 def handle_audio_chunk(data):
     sid = request.sid
     matricola = None
+    
     with sessions_lock:
         for mat, session_data in sessions.items():
             if session_data.get("sid") == sid:
                 matricola = mat
                 client = session_data
                 break
+    
     if not matricola:
         return
 
-    client["audio_buffer"] += data
-    rec = client.get("recognizer")
-    if rec is None:
-        rec = KaldiRecognizer(vosk_model, SAMPLE_RATE)
-        rec.SetWords(True)
-        client["recognizer"] = rec
-    if rec.AcceptWaveform(data):
-        result = json.loads(rec.Result())
-        sentence = result.get("text", "").strip()
-        rec.Reset()
-        if sentence:
-            client["sentence_count"] += 1
-            wav_filename = os.path.join(WAV_DIRECTORY, f"sentence_{sid}_{client['sentence_count']}.wav")
-            with wave.open(wav_filename, "wb") as wf:
-                wf.setnchannels(1)
-                wf.setsampwidth(2)
-                wf.setframerate(SAMPLE_RATE)
-                wf.writeframes(client["audio_buffer"])
-            client["audio_buffer"] = b""
-            threading.Thread(target=process_sentence_and_emit,
-                             args=(matricola, sid, wav_filename, sentence)).start()
-    else:
-        partial_text = json.loads(rec.PartialResult()).get("partial", "")
-        client["partial_transcript"] = partial_text
-        socketio.emit("partial_result", {"partial": partial_text}, room=sid)
+    try:
+        client["audio_buffer"] += data
+        rec = client.get("recognizer")
+        if rec is None:
+            rec = KaldiRecognizer(vosk_model, SAMPLE_RATE)
+            rec.SetWords(True)
+            client["recognizer"] = rec
+        
+        if rec.AcceptWaveform(data):
+            result = json.loads(rec.Result())
+            sentence = result.get("text", "").strip()
+            rec.Reset()
+            
+            if sentence:
+                client["sentence_count"] += 1
+                wav_filename = os.path.join(WAV_DIRECTORY, f"sentence_{sid}_{client['sentence_count']}.wav")
+                
+                try:
+                    with wave.open(wav_filename, "wb") as wf:
+                        wf.setnchannels(1)
+                        wf.setsampwidth(2)
+                        wf.setframerate(SAMPLE_RATE)
+                        wf.writeframes(client["audio_buffer"])
+                    
+                    client["audio_buffer"] = b""
+                    
+                    threading.Thread(
+                        target=process_sentence_and_emit,
+                        args=(matricola, sid, wav_filename, sentence),
+                        daemon=True
+                    ).start()
+                    
+                except Exception as e:
+                    print(f"Error creating wav file: {e}")
+        else:
+            partial_text = json.loads(rec.PartialResult()).get("partial", "")
+            client["partial_transcript"] = partial_text
+            socketio.emit("partial_result", {"partial": partial_text}, room=sid)
+            
+    except Exception as e:
+        print(f"Error in handle_audio_chunk: {e}")
 
 @socketio.on("stop_recording")
 def handle_stop_recording():
     sid = request.sid
     matricola = None
-    client = None  # ← ADD THIS LINE
+    client = None
+    
     with sessions_lock:
         for mat, session_data in sessions.items():
             if session_data.get("sid") == sid:
                 matricola = mat
                 client = session_data
                 break
+    
     if not client:
         return
 
-    # If there is remaining audio data, process and save it.
-    if client["audio_buffer"]:
-        rec = client["recognizer"]
-        result = json.loads(rec.Result())
-        sentence = result.get("text", "").strip()
-        if sentence:
-            client["sentence_count"] += 1
-            wav_filename = os.path.join(WAV_DIRECTORY, f"sentence_{sid}_{client['sentence_count']}.wav")
-            with wave.open(wav_filename, "wb") as wf:
-                wf.setnchannels(1)
-                wf.setsampwidth(2)
-                wf.setframerate(SAMPLE_RATE)
-                wf.writeframes(client["audio_buffer"])
-            client["audio_buffer"] = b""
-            threading.Thread(target=process_sentence_and_emit,
-                             args=(matricola, sid, wav_filename, sentence)).start()
+    try:
+        # If there is remaining audio data, process and save it.
+        if client["audio_buffer"]:
+            rec = client.get("recognizer")
+            if rec:
+                result = json.loads(rec.Result())
+                sentence = result.get("text", "").strip()
+                if sentence:
+                    client["sentence_count"] += 1
+                    wav_filename = os.path.join(WAV_DIRECTORY, f"sentence_{sid}_{client['sentence_count']}.wav")
+                    
+                    try:
+                        with wave.open(wav_filename, "wb") as wf:
+                            wf.setnchannels(1)
+                            wf.setsampwidth(2)
+                            wf.setframerate(SAMPLE_RATE)
+                            wf.writeframes(client["audio_buffer"])
+                        
+                        client["audio_buffer"] = b""
+                        
+                        threading.Thread(
+                            target=process_sentence_and_emit,
+                            args=(matricola, sid, wav_filename, sentence),
+                            daemon=True
+                        ).start()
+                        
+                    except Exception as e:
+                        print(f"Error in final audio processing: {e}")
 
-    socketio.emit("recording_stopped", {"message": "Recording stopped."}, room=sid)
-    print(f"[STOP_RECORDING] Recording stopped for matricola {matricola}")
-
+        socketio.emit("recording_stopped", {"message": "Recording stopped."}, room=sid)
+        print(f"[STOP_RECORDING] Recording stopped for matricola {matricola}")
+        
+    except Exception as e:
+        print(f"Error in handle_stop_recording: {e}")
 
 @socketio.on("generate_report")
 def handle_generate_report():
@@ -384,12 +613,12 @@ def handle_generate_report():
             return
 
         print("Generating report with Ollama for sid=", sid)
-        report_text = genera_report_medico(tfile)
+        with memory_monitor("report_generation"):
+            report_text = genera_report_medico(tfile)
         print("Ollama response done. Report generation completed for sid=", sid)
         socketio.emit("report_generated", {"report": report_text}, room=sid)
     
     socketio.start_background_task(run_report)
-
 
 @socketio.on("save_session")
 def handle_save_session(data):
@@ -427,7 +656,7 @@ def handle_save_session(data):
             time.sleep(2)
             cleanup_session(matricola)
         
-        threading.Thread(target=delayed_cleanup).start()
+        threading.Thread(target=delayed_cleanup, daemon=True).start()
         
     except Exception as e:
         print("Error saving session:", e)
@@ -447,8 +676,11 @@ def handle_reset_session(data):
             # Clear transcript file
             transcript_file = session_data.get('transcript_file')
             if transcript_file and os.path.exists(transcript_file):
-                with open(transcript_file, 'w', encoding='utf-8') as f:
-                    f.write("")  # Clear content
+                try:
+                    with open(transcript_file, 'w', encoding='utf-8') as f:
+                        f.write("")  # Clear content
+                except Exception as e:
+                    print(f"Error clearing transcript: {e}")
             
             # Reset session data but keep the session alive
             session_data['partial_transcript'] = ""
@@ -456,12 +688,20 @@ def handle_reset_session(data):
             session_data['sentence_count'] = 0
             session_data['created_at'] = time.time()  # Reset timestamp
             
+            # Clean up recognizer
+            if 'recognizer' in session_data:
+                try:
+                    del session_data['recognizer']
+                except:
+                    pass
+            
             print(f"[RESET] Session reset completed for {matricola}")
         else:
             print(f"[RESET] No session found for {matricola}")
     
+    # Force garbage collection after reset
+    force_gc()
     emit('session_reset_complete', {'status': 'success'}, room=request.sid)
-
 
 ###############################
 #  AJAX ROUTES FOR PARTIAL & TRANSCRIPT (Using matricola)
@@ -510,7 +750,6 @@ def doctor_setup():
     session['access_granted'] = True
     return render_template("doctor_setup.html", cf=cf)
 
-
 @app.route("/refertazione/check_doctor", methods=["GET"])
 def check_doctor():
     mat = request.args.get("matricola", "").strip()
@@ -555,7 +794,7 @@ def serve_index():
         if mat in sessions:
             session_data = sessions[mat]
             created_at = session_data.get("created_at", 0)
-            if time.time() - created_at > 6 * 3600:  # 6 hours
+            if time.time() - created_at > 4 * 3600:  # 4 hours
                 cleanup_session(mat)
                 return redirect(url_for("doctor_setup", error="session_expired"))
     
@@ -578,7 +817,8 @@ def generate_report():
         return jsonify({"error": "Transcript missing"}), 404
 
     print("Generating report with Ollama for matricola=", matricola)
-    report_text = genera_report_medico(tfile)
+    with memory_monitor("report_generation_http"):
+        report_text = genera_report_medico(tfile)
     print("Ollama response done. Report generation completed for matricola=", matricola)
     # Return the report in JSON
     return jsonify({"report": report_text})
@@ -619,7 +859,7 @@ def save_session_http():
             time.sleep(1)  # Give time for response to be sent
             cleanup_session(matricola)
         
-        threading.Thread(target=delayed_cleanup).start()
+        threading.Thread(target=delayed_cleanup, daemon=True).start()
         
         return jsonify({"success": True, "filename": filename})
         
@@ -647,7 +887,7 @@ def check_session():
         # If session exists, check if it's expired
         session_data = sessions[mat]
         created_at = session_data.get("created_at", 0)
-        if time.time() - created_at > 6 * 3600:  # 6 hours
+        if time.time() - created_at > 4 * 3600:  # 4 hours
             cleanup_session(mat)
             return jsonify({"valid": False, "redirect": True, "reason": "session_expired"})
     
@@ -655,7 +895,13 @@ def check_session():
 
 @app.route("/refertazione/heartbeat", methods=["GET"])
 def heartbeat():
-    return jsonify({"status": "alive"})
+    memory_usage = log_memory_usage("heartbeat")
+    return jsonify({
+        "status": "alive", 
+        "memory_mb": memory_usage,
+        "sessions": len(sessions),
+        "connections": len(active_connections)
+    })
 
 @socketio.on("disconnecting_cleanup")
 def handle_manual_cleanup():
@@ -667,37 +913,61 @@ def handle_manual_cleanup():
                 sessions.pop(mat, None)
                 break
 
+###############################
+# PERIODIC CLEANUP TASK
+###############################
+
 def cleanup_expired_sessions():
+    """Enhanced cleanup with memory management"""
     while True:
-        now = time.time()
-        expired_sessions = []
-        disconnected_sessions = []
-        
-        with sessions_lock:
-            # Check for expired sessions (6+ hours old)
-            for mat, data in list(sessions.items()):
-                created = data.get("created_at", now)
-                if now - created > 6 * 3600:  # 6 hours
-                    expired_sessions.append(mat)
+        try:
+            now = time.time()
+            expired_sessions = []
+            disconnected_sessions = []
             
-            # Check for disconnected sessions (no heartbeat for 5+ minutes)
-            for mat in list(sessions.keys()):
-                if mat not in active_connections:
-                    # Session exists but no active connection - mark for cleanup after 5 min
-                    continue
-                elif now - active_connections[mat]['last_seen'] > 300:  # 5 minutes
-                    disconnected_sessions.append(mat)
+            with sessions_lock:
+                # Check for expired sessions (4+ hours old instead of 6)
+                for mat, data in list(sessions.items()):
+                    created = data.get("created_at", now)
+                    if now - created > 4 * 3600:  # 4 hours
+                        expired_sessions.append(mat)
+                
+                # Check for disconnected sessions (no heartbeat for 5+ minutes)
+                for mat in list(sessions.keys()):
+                    if mat not in active_connections:
+                        # Session exists but no active connection - mark for cleanup after 5 min
+                        continue
+                    elif now - active_connections[mat]['last_seen'] > 300:  # 5 minutes
+                        disconnected_sessions.append(mat)
 
-        # Clean up expired and disconnected sessions
-        for mat in expired_sessions + disconnected_sessions:
-            print(f"[CLEANUP] Cleaning up session for {mat}")
-            cleanup_session(mat)
+            # Clean up expired and disconnected sessions
+            for mat in expired_sessions + disconnected_sessions:
+                print(f"[CLEANUP] Cleaning up session for {mat}")
+                cleanup_session(mat)
 
-        # Remove old wavs
-        remove_temp_wavs(WAV_DIRECTORY)
-        time.sleep(60)  # Run cleanup every minute
-
+            # Remove old wavs more frequently
+            remove_temp_wavs(WAV_DIRECTORY)
+            
+            # Force garbage collection every 5 minutes
+            force_gc()
+            
+            # Log memory usage
+            log_memory_usage("Periodic cleanup")
+            
+            time.sleep(60)  # Run cleanup every minute
+            
+        except Exception as e:
+            print(f"Error in cleanup_expired_sessions: {e}")
+            time.sleep(60)
 
 if __name__ == "__main__":
-    socketio.start_background_task(cleanup_expired_sessions)
-    socketio.run(app, host='0.0.0.0', port=5002, debug=True)
+    # Start background cleanup task AFTER Flask starts
+    import threading
+    cleanup_thread = threading.Thread(target=cleanup_expired_sessions, daemon=True)
+    cleanup_thread.start()
+    
+    # Log initial memory usage
+    log_memory_usage("Application start")
+    
+    # Run the application
+    socketio.run(app, host='0.0.0.0', port=5002, debug=False)
