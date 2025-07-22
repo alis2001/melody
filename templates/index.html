@@ -1,0 +1,408 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Trascrizione Vocale in Tempo Reale</title>
+  <style>
+    body {
+      animation: pageSlideIn 0.8s ease-out;
+      margin: 0;
+      padding: 0;
+      height: 100vh;
+      background: linear-gradient(-45deg,
+        #f5faff,
+        #e3f0ff,
+        #ffe9f9,
+        #fffadd,
+        #d9f0ff,
+        #f0f7ff
+      );
+      background-size: 800% 800%;
+      animation: gradientFlow 30s ease-in-out infinite, brightnessPulse 8s ease-in-out infinite;
+      font-family: 'Segoe UI', sans-serif;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      color: #333;
+    }
+
+    @keyframes gradientFlow {
+      0% { background-position: 0% 50%; }
+      25% { background-position: 50% 50%; }
+      50% { background-position: 100% 50%; }
+      75% { background-position: 50% 0%; }
+      100% { background-position: 0% 50%; }
+    }
+
+    @keyframes brightnessPulse {
+      0%, 100% { filter: brightness(1); }
+      50% { filter: brightness(1.2); }
+    }
+
+    h1, h2 {
+      text-align: center;
+      color: #1565c0;
+    }
+
+    .card {
+      animation: cardSlideIn 1s ease-out 0.2s both;
+      background: rgba(255, 255, 255, 0.7);
+      border-radius: 20px;
+      box-shadow: 0 8px 20px rgba(0, 0, 0, 0.1);
+      padding: 2rem;
+      width: 100%;
+      max-width: 700px;
+      backdrop-filter: blur(12px);
+      margin-top: 2rem;
+    }
+    
+    @keyframes pageSlideIn {
+      0% {
+        opacity: 0;
+        transform: translateX(100px);
+      }
+      100% {
+        opacity: 1;
+        transform: translateX(0);
+      }
+    }
+
+    @keyframes cardSlideIn {
+      0% {
+        opacity: 0;
+        transform: translateY(50px) scale(0.95);
+      }
+      100% {
+        opacity: 1;
+        transform: translateY(0) scale(1);
+      }
+    }
+
+    /* Wrapper for both buttons */
+    #recordControls {
+      position: relative;
+      width: 50%;
+      height: 55px;
+      margin: 20px auto 0 auto;
+    }
+
+    #recordControls button {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      font-size: 1rem;
+      font-weight: bold;
+      border: none;
+      border-radius: 12px;
+      cursor: pointer;
+      transition: opacity 0.4s ease, transform 0.3s ease;
+      opacity: 0;
+      pointer-events: none;
+    }
+
+    #recordBtn {
+      background-color: #67aae9;
+      color: white;
+    }
+
+    #recordBtn:hover {
+      background-color: #2196f3;
+    }
+
+    #stopBtn {
+      background-color: #e53935;
+      color: white;
+    }
+
+    #stopBtn:hover {
+      background-color: #c62828;
+    }
+
+    /* Show only the visible button */
+    #recordBtn.visible,
+    #stopBtn.visible {
+      opacity: 1;
+      pointer-events: auto;
+    }
+
+    #generateReportBtn {
+      background-color: #fb8c00;
+      color: white;
+      padding: 14px 20px;
+      border-radius: 12px;
+      border: none;
+      font-weight: bold;
+      cursor: pointer;
+      width: 50%;
+      margin: 15px auto 0 auto;
+      display: block;
+      font-size: 1rem;
+      transition: background 0.3s ease;
+    }
+
+    #generateReportBtn:hover {
+      background-color: #ef6c00;
+    }
+
+    #finalTranscriptions {
+      border: 3px solid #2196f3;
+      padding: 20px;
+      border-radius: 16px;
+      background-color: rgba(255, 255, 255, 0.85);
+      margin-top: 20px;
+      font-size: 18px;
+      max-height: 400px;
+      overflow-y: auto;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.15);
+      font-family: 'Segoe UI', sans-serif;
+      transform: scale(1.02);
+      transition: transform 0.4s ease;
+    }
+
+    #finalTranscriptions:hover {
+      transform: scale(1.04);
+    }
+
+    .line {
+      margin-bottom: 12px;
+      line-height: 1.6;
+      font-weight: 500;
+      padding-left: 5px;
+      font-family: 'Segoe UI', sans-serif;
+    }
+
+    .line-doctor .speaker {
+      color: #2196f3; /* light blue */
+      font-weight: bold;
+    }
+
+    .line-patient .speaker {
+      color: #fb8c00; /* orange */
+      font-weight: bold;
+    }
+
+    #partialTranscription {
+      padding: 10px;
+      background: #fff3e0;
+      border: 1px solid #ffb74d;
+      border-radius: 8px;
+      font-style: italic;
+      margin-top: 10px;
+    }
+
+    #reportOutput {
+      border: 2px solid orange;
+      padding: 15px;
+      border-radius: 10px;
+      background-color: #f9f9f9;
+      margin-top: 15px;
+      font-size: 16px;
+      max-height: 300px;
+      overflow-y: auto;
+      box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+    }
+
+    #reportTextarea {
+      width: 100%;
+      height: 200px;
+      padding: 10px;
+      border-radius: 10px;
+      border: 2px solid #ff9800;
+      font-family: 'Segoe UI', sans-serif;
+      margin-top: 10px;
+    }
+
+    #modifyReportBtn,
+    #saveSessionButton {
+      background-color: #4caf50;
+      color: white;
+      padding: 14px 20px;
+      border-radius: 12px;
+      border: none;
+      font-weight: bold;
+      cursor: pointer;
+      width: 50%;
+      margin: 15px auto 0 auto;
+      display: block;
+      font-size: 1rem;
+      transition: background 0.3s ease;
+    }
+
+    #modifyReportBtn:hover,
+    #saveSessionButton:hover {
+      background-color: #388e3c;
+    }
+
+    #saveSessionButton:disabled {
+      background-color: #ccc;
+      cursor: not-allowed;
+    }
+
+    #saveInfoSection {
+      border: 2px solid orange;
+      padding: 15px;
+      margin-top: 20px;
+      border-radius: 10px;
+      background-color: #fffde7;
+    }
+
+    label {
+      font-weight: bold;
+      margin-top: 10px;
+      display: block;
+    }
+
+    input {
+      padding: 10px;
+      border-radius: 8px;
+      border: 1px solid #ccc;
+      width: 100%;
+      margin-top: 5px;
+      box-sizing: border-box;
+    }
+
+    .spinner {
+      border: 4px solid #f3f3f3;
+      border-top: 4px solid #3498db;
+      border-radius: 50%;
+      width: 40px;
+      height: 40px;
+      animation: spin 2s linear infinite;
+      margin: 20px auto;
+    }
+
+    @keyframes spin {
+      0% { transform: rotate(0deg);}
+      100% { transform: rotate(360deg);}
+    }
+
+    /* Reset Session Button Styles - TOP RIGHT */
+    #resetSessionBtn {
+      position: fixed !important;
+      top: 20px !important;
+      right: 20px !important;
+      z-index: 10000 !important;
+      background: linear-gradient(45deg, #FF6B6B, #FF5252) !important;
+      color: white !important;
+      border: none !important;
+      padding: 15px 25px !important;
+      border-radius: 30px !important;
+      font-size: 15px !important;
+      font-weight: 700 !important;
+      cursor: pointer !important;
+      box-shadow: 0 6px 20px rgba(255,107,107,0.4) !important;
+      transition: all 0.3s ease !important;
+      display: flex !important;
+      align-items: center !important;
+      gap: 10px !important;
+      font-family: 'Segoe UI', sans-serif !important;
+      min-width: 180px !important;
+      justify-content: center !important;
+      border: 2px solid rgba(255,255,255,0.3) !important;
+      opacity: 1 !important;
+      visibility: visible !important;
+      pointer-events: auto !important;
+    }
+
+    #resetSessionBtn:hover {
+      transform: scale(1.08) !important;
+      box-shadow: 0 8px 25px rgba(255,107,107,0.5) !important;
+    }
+
+    #resetSessionBtn:active {
+      transform: scale(0.95) !important;
+    }
+
+    /* Back Button Styles - TOP LEFT */
+    #backToDoctorSetup {
+      position: fixed !important;
+      top: 20px !important;
+      left: 20px !important;
+      z-index: 10000 !important;
+      background: linear-gradient(135deg, #3498db, #2980b9) !important;
+      color: white !important;
+      border: none !important;
+      padding: 15px 25px !important;
+      border-radius: 30px !important;
+      font-size: 15px !important;
+      font-weight: 700 !important;
+      cursor: pointer !important;
+      transition: all 0.3s ease !important;
+      box-shadow: 0 6px 20px rgba(52, 152, 219, 0.4) !important;
+      display: flex !important;
+      align-items: center !important;
+      gap: 10px !important;
+      font-family: 'Segoe UI', sans-serif !important;
+      min-width: 180px !important;
+      justify-content: center !important;
+      border: 2px solid rgba(255,255,255,0.3) !important;
+    }
+
+    #backToDoctorSetup:hover {
+      transform: scale(1.08) !important;
+      box-shadow: 0 8px 25px rgba(52, 152, 219, 0.5) !important;
+    }
+
+  </style>
+</head>
+<body>
+  <!-- Back button - TOP LEFT -->
+  <button id="backToDoctorSetup">
+    ← Torna Indietro
+  </button>
+
+  <!-- Reset button - TOP RIGHT -->
+  <button id="resetSessionBtn">
+    🔄 Resetta Sessione
+  </button>
+
+  <div class="card">
+    <h1>Trascrizione Vocale in Tempo Reale</h1>
+
+    <div id="recordControls">
+      <button id="recordBtn" class="visible">Inizia Registrazione</button>
+      <button id="stopBtn">Ferma Registrazione</button>
+    </div>
+
+    <h2>Trascrizioni Finali</h2>
+    <div id="finalTranscriptions"></div>
+
+    <h2>Trascrizione Parziale</h2>
+    <div id="partialTranscription"></div>
+
+    <button id="generateReportBtn">Genera Referto Medico</button>
+    <div id="loadingSpinner" style="display:none;">
+      <div class="spinner"></div>
+    </div>
+
+    <div id="reportOutput" style="display:none;"></div>
+    <button id="modifyReportBtn" style="display:none;">Modifica Referto</button>
+    <textarea id="reportTextarea" style="display:none;"></textarea>
+    <button id="saveSessionButton" style="display:none;" disabled>Salva Sessione</button>
+
+    <div id="saveInfoSection" style="display:none;">
+      <label>Matricola Dottore:</label>
+      <input type="text" id="matricola" />
+      <label>Codice Fiscale Paziente:</label>
+      <input type="text" id="cf" />
+    </div>
+  </div>
+
+  <!-- Socket.IO -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.6.1/socket.io.min.js"></script>
+  <!-- Your JS logic remains untouched -->
+  <script src="/refertazione/static/js/script.js"></script>
+
+  <!-- Add only the back button functionality -->
+  <script>
+    // Backward button functionality
+    document.getElementById('backToDoctorSetup').addEventListener('click', function() {
+      // Redirect to doctor_setup without clearing session
+      window.location.href = '/refertazione/doctor_setup';
+    });
+  </script>
+</body>
+</html>

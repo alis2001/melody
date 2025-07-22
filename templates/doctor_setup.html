@@ -1,0 +1,587 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+  <meta charset="UTF-8">
+  <title>Registrazione Voce - Dottore</title>
+  <style>
+    body {
+      margin: 0;
+      padding: 0;
+      height: 100vh;
+      background: linear-gradient(-45deg,
+        #f5faff,   /* icy white-blue */
+        #e3f0ff,   /* baby blue */
+        #ffe9f9,   /* soft pink */
+        #fffadd,   /* soft light yellow */
+        #d9f0ff,   /* pastel cyan */
+        #f0f7ff    /* cloudy white */
+      );
+      background-size: 800% 800%;
+      animation: gradientFlow 30s ease-in-out infinite, brightnessPulse 8s ease-in-out infinite;
+      font-family: 'Segoe UI', sans-serif;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      color: #333;
+    }
+
+    @keyframes gradientFlow {
+      0% { background-position: 0% 50%; }
+      25% { background-position: 50% 50%; }
+      50% { background-position: 100% 50%; }
+      75% { background-position: 50% 0%; }
+      100% { background-position: 0% 50%; }
+    }
+
+    @keyframes brightnessPulse {
+      0%, 100% { filter: brightness(1); }
+      50% { filter: brightness(1.2); }
+    }
+
+    h1 {
+      font-size: 2rem;
+      margin-bottom: 1rem;
+      color: #1565c0;
+    }
+
+    .card {
+      background: rgba(255, 255, 255, 0.7);
+      border-radius: 20px;
+      box-shadow: 0 8px 20px rgba(0, 0, 0, 0.1);
+      padding: 2rem;
+      width: 100%;
+      max-width: 700px;
+      backdrop-filter: blur(12px);
+      margin-top: 2rem;
+    }
+
+    label, p, select, input, button {
+      font-size: 1rem;
+      margin-top: 1rem;
+      width: 100%;
+      box-sizing: border-box;
+    }
+
+    input, select, button {
+      padding: 10px;
+      border-radius: 10px;
+      border: 1px solid #ccc;
+      outline: none;
+    }
+
+    button {
+      background: #67aae9;
+      color: white;
+      font-weight: bold;
+      cursor: pointer;
+      border: none;
+      transition: background 0.3s ease;
+      margin: 20px auto;
+      display: block;
+      width: 50%;
+      padding: 10px;
+      border-radius: 10px;
+      text-align: center;
+    }
+
+
+    button:hover {
+      background: #f57c00;
+    }
+
+    #timer {
+      margin-top: 15px;
+      font-weight: bold;
+      color: #333;
+    }
+
+    #status {
+      margin-top: 10px;
+      font-weight: bold;
+      color: #2e7d32;
+    }
+
+    #matricolaError {
+      color: red;
+      font-weight: bold;
+      margin-top: 5px;
+    }
+
+    .status-circle {
+      width: 16px;
+      height: 16px;
+      border-radius: 50%;
+      display: inline-block;
+      margin-right: 8px;
+      border: 2px solid #333;
+      vertical-align: middle;
+    }
+
+    .status-circle.red { background-color: #e74c3c; }
+    .status-circle.green { background-color: #2ecc71; }
+
+    .input-container {
+      display: flex;
+      align-items: center;
+      margin-top: 10px;
+      gap: 10px;
+    }
+
+    #recordingControls {
+      display: none;
+      margin-top: 2rem;
+      border-top: 1px solid #ddd;
+      padding-top: 1rem;
+    }
+
+    #specialtySentence {
+      font-style: italic;
+      color: #555;
+      margin-top: 0.5rem;
+    }
+
+    /* Page Transition Styles */
+.page-transition-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(45deg, #2196F3, #1976D2, #0D47A1);
+  z-index: 20000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  visibility: hidden;
+  transition: all 0.8s ease-in-out;
+}
+
+.page-transition-overlay.active {
+  opacity: 1;
+  visibility: visible;
+}
+
+.transition-content {
+  text-align: center;
+  color: white;
+  animation: slideInScale 0.8s ease-out;
+}
+
+.transition-content h2 {
+  font-size: 2rem;
+  margin: 0 0 20px 0;
+  color: white;
+  font-weight: 600;
+}
+
+.transition-content p {
+  font-size: 1.2rem;
+  margin: 0;
+  opacity: 0.9;
+}
+
+.loading-dots {
+  display: inline-block;
+  margin-left: 10px;
+}
+
+.loading-dots span {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: white;
+  margin: 0 2px;
+  animation: dotPulse 1.4s infinite both;
+}
+
+.loading-dots span:nth-child(1) { animation-delay: -0.32s; }
+.loading-dots span:nth-child(2) { animation-delay: -0.16s; }
+
+@keyframes slideInScale {
+  0% {
+    transform: scale(0.8) translateY(50px);
+    opacity: 0;
+  }
+  100% {
+    transform: scale(1) translateY(0);
+    opacity: 1;
+  }
+}
+
+@keyframes dotPulse {
+  0%, 80%, 100% {
+    transform: scale(0.8);
+    opacity: 0.5;
+  }
+  40% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+/* Card slide animation */
+.card {
+  animation: slideInFromBottom 0.8s ease-out;
+}
+
+@keyframes slideInFromBottom {
+  0% {
+    transform: translateY(100px);
+    opacity: 0;
+  }
+  100% {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+/* Success animation for status */
+.status-success {
+  animation: successBounce 0.6s ease-out;
+}
+
+@keyframes successBounce {
+  0% { transform: scale(1); }
+  50% { transform: scale(1.1); }
+  100% { transform: scale(1); }
+}
+
+#homePageBtn {
+  position: fixed !important;
+  top: 20px !important;
+  left: 20px !important;
+  z-index: 10000 !important;
+  background: linear-gradient(135deg, #3498db, #2980b9) !important;
+  color: white !important;
+  border: none !important;
+  padding: 15px 25px !important;
+  border-radius: 30px !important;
+  font-size: 15px !important;
+  font-weight: 700 !important;
+  cursor: pointer !important;
+  transition: all 0.3s ease !important;
+  box-shadow: 0 6px 20px rgba(52, 152, 219, 0.4) !important;
+  display: flex !important;
+  align-items: center !important;
+  gap: 10px !important;
+  font-family: 'Segoe UI', sans-serif !important;
+  width: auto !important;  /* Override the global width: 100% */
+  min-width: 180px !important;
+  max-width: 180px !important;  /* Ensure it doesn't grow */
+  justify-content: center !important;
+  border: 2px solid rgba(255,255,255,0.3) !important;
+  margin: 0 !important;  /* Override global margin */
+}
+
+#homePageBtn:hover {
+  transform: scale(1.08) !important;
+  box-shadow: 0 8px 25px rgba(52, 152, 219, 0.5) !important;
+}
+  </style>
+</head>
+<body>
+  <!-- Home button - TOP LEFT -->
+  <button id="homePageBtn">
+    🏠 Pagina Casa
+  </button>
+    <div class="card">
+      <h1>Refertazione Vocale</h1>
+      <p>Inserisci il numero di matricola per iniziare:</p>
+
+      <div class="input-container">
+        <div id="statusCircle" class="status-circle red"></div>
+        <input type="text" id="matricola" placeholder="Es. 12345" />
+      </div>
+
+      <div id="matricolaError"></div>
+      <button id="checkMatricola">Verifica Matricola</button>
+
+      <label for="specialty" style="display: none;">Seleziona la tua branca:</label>
+      <select id="specialty" style="display: none;">
+        <option value="">-- Seleziona una branca --</option>
+      </select>
+
+      <p id="specialtySentence" style="display: none;"></p>
+
+      <div id="recordingControls">
+        <p>Non abbiamo trovato un campione vocale per questa matricola. Registra almeno 10 secondi di voce.</p>
+        <button id="startRecording">Inizia Registrazione</button>
+        <button id="stopRecording" disabled>Ferma Registrazione</button>
+        <p id="timer">Tempo registrato: 0 secondi</p>
+      </div>
+
+      <p id="status"></p>
+    </div>
+  <script>
+  let mediaRecorder;
+  let recordedChunks = [];
+  let startTime;
+  let timerInterval;
+
+  const checkButton = document.getElementById('checkMatricola');
+  const matricolaInput = document.getElementById('matricola');
+  const matricolaError = document.getElementById('matricolaError');
+  const recordingControls = document.getElementById('recordingControls');
+  const statusDisplay = document.getElementById('status');
+  const timerDisplay = document.getElementById('timer');
+  const startButton = document.getElementById('startRecording');
+  const stopButton = document.getElementById('stopRecording');
+  const statusCircle = document.getElementById('statusCircle');
+  const specialtySelect = document.getElementById('specialty');
+  const specialtySentenceDisplay = document.getElementById('specialtySentence');
+
+  let specialtySentences = {};
+
+  // Fetch the branca_sentences.txt file and parse it into an object
+  fetch('/refertazione/static/branca_sentences.txt')
+    .then(response => response.text())
+    .then(text => {
+      console.log("File fetched successfully.");
+      const lines = text.split('\n');
+      lines.forEach(line => {
+        const [specialty, sentence] = line.split(':');
+        if (specialty && sentence) {
+          specialtySentences[specialty.trim()] = sentence.trim().replace(/^"|"$/g, '');
+        }
+      });
+
+      // Populate the dropdown with specialties
+      Object.keys(specialtySentences).forEach(specialty => {
+        const option = document.createElement('option');
+        option.value = specialty;
+        option.textContent = specialty;
+        specialtySelect.appendChild(option);
+      });
+    })
+    .catch(err => {
+      console.error('Errore nel caricamento delle frasi:', err);
+      statusDisplay.textContent = "Errore nel caricamento dei dati delle branche.";
+    });
+
+  // Update the displayed sentence whenever the user selects a specialty
+  specialtySelect.addEventListener('change', () => {
+    const selectedSpecialty = specialtySelect.value;
+    if (selectedSpecialty) {
+      specialtySentenceDisplay.textContent = specialtySentences[selectedSpecialty] || "Seleziona una branca per vedere il testo.";
+    } else {
+      specialtySentenceDisplay.textContent = "";
+    }
+  });
+
+  function validateMatricola(m) {
+    return /^\d{5}$/.test(m);
+  }
+
+  checkButton.addEventListener('click', () => {
+    const matricola = matricolaInput.value.trim();
+    matricolaError.textContent = '';
+
+    if (!matricola) {
+      matricolaError.textContent = "Inserisci il numero di matricola.";
+      return;
+    }
+    if (!validateMatricola(matricola)) {
+      matricolaError.textContent = "Il numero di matricola deve essere di 5 cifre.";
+      return;
+    }
+
+    fetch(`/refertazione/check_doctor?matricola=${matricola}`)
+      .then(response => response.json())
+      .then(data => {
+        if (data.exists) {
+          statusCircle.classList.remove('red');
+          statusCircle.classList.add('green');
+          statusDisplay.classList.add('status-success');
+          statusDisplay.textContent = "✅ Campione vocale trovato!";
+
+          // Start smooth transition
+          setTimeout(() => {
+            startPageTransition(matricola);
+          }, 800);
+        } else {
+          // ... rest of the code
+          statusCircle.classList.remove('green');
+          statusCircle.classList.add('red');
+          statusDisplay.textContent = "Nessun campione trovato. Registra la tua voce.";
+          recordingControls.style.display = "block";
+
+          specialtySelect.style.display = "block";
+          document.querySelector('label[for="specialty"]').style.display = "block";
+          specialtySentenceDisplay.style.display = "block";
+        }
+      })
+      .catch(err => {
+        console.error('Errore:', err);
+        statusDisplay.textContent = "Errore nella verifica della matricola.";
+      });
+  });
+
+  startButton.addEventListener('click', async () => {
+    const matricola = matricolaInput.value.trim();
+    if (!matricola) {
+      alert("Inserisci il numero di matricola.");
+      return;
+    }
+
+    const selectedSpecialty = specialtySelect.value;
+    if (!selectedSpecialty) {
+      alert("Seleziona una branca medica prima di registrare.");
+      return;
+    }
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      mediaRecorder = new MediaRecorder(stream);
+      recordedChunks = [];
+
+      mediaRecorder.ondataavailable = event => {
+        if (event.data.size > 0) {
+          recordedChunks.push(event.data);
+        }
+      };
+
+      mediaRecorder.onstart = () => {
+        startTime = Date.now();
+        timerInterval = setInterval(() => {
+          const seconds = Math.floor((Date.now() - startTime) / 1000);
+          timerDisplay.textContent = "Tempo registrato: " + seconds + " secondi";
+        }, 1000);
+        statusDisplay.textContent = "Registrazione in corso...";
+      };
+
+      mediaRecorder.onstop = () => {
+        clearInterval(timerInterval);
+        const duration = Math.floor((Date.now() - startTime) / 1000);
+        if (duration < 10) {
+          alert("La registrazione deve essere di almeno 10 secondi. Riprova.");
+          statusDisplay.textContent = "Registrazione troppo breve.";
+          return;
+        }
+        const blob = new Blob(recordedChunks, { type: 'audio/wav' });
+        uploadRecording(blob, matricola, selectedSpecialty);
+      };
+
+      mediaRecorder.start();
+      startButton.disabled = true;
+      stopButton.disabled = false;
+    } catch (err) {
+      console.error("Errore nell'accesso al microfono:", err);
+      alert("Errore nell'accesso al microfono: " + err);
+    }
+  });
+
+  stopButton.addEventListener('click', () => {
+    if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+      mediaRecorder.stop();
+      startButton.disabled = false;
+      stopButton.disabled = true;
+    }
+  });
+
+  function uploadRecording(blob, matricola, specialty) {
+    const specialtySentence = specialtySentences[specialty] || "";
+    const formData = new FormData();
+    formData.append('audio_data', blob, matricola + '.wav');
+    formData.append('matricola', matricola);
+    formData.append('specialty', specialty);
+    formData.append('specialty_sentence', specialtySentence);
+
+    fetch('/refertazione/upload_default_voice', {
+      method: 'POST',
+      body: formData
+    })
+      .then(response => response.json())
+      .then(data => {
+        if (data.success) {
+          statusCircle.classList.remove('red');
+          statusCircle.classList.add('green');
+          statusDisplay.classList.add('status-success');
+          statusDisplay.textContent = "✅ Registrazione inviata con successo!";
+
+          setTimeout(() => {
+            startRecordingSuccessTransition(matricola);
+          }, 800);
+        } else {
+          statusDisplay.textContent = "Invio fallito. Riprova.";
+        }
+      })
+      .catch(error => {
+        console.error("Errore durante l'invio:", error);
+        statusDisplay.textContent = "Errore durante l'invio. Riprova.";
+      });
+  }
+  const urlParams = new URLSearchParams(window.location.search);
+  const error = urlParams.get('error');
+
+  if (error === 'session_expired') {
+    alert('⚠️ La sessione è scaduta (6+ ore). Rieffettua l\'accesso.');
+  } else if (error === 'voice_not_found') {
+    alert('⚠️ Voce non trovata. Registra nuovamente la tua voce.');
+  }
+
+  // Clear error from URL after showing
+  if (error) {
+    const newUrl = window.location.pathname;
+    window.history.replaceState({}, document.title, newUrl);
+  }
+
+  function startPageTransition(matricola) {
+  // Create transition overlay
+  const overlay = document.createElement('div');
+  overlay.className = 'page-transition-overlay';
+  overlay.innerHTML = `
+    <div class="transition-content">
+      <h2>🏥 Accesso Sistema</h2>
+      <p>Preparazione interfaccia di refertazione<span class="loading-dots"><span></span><span></span><span></span></span></p>
+    </div>
+  `;
+  
+  document.body.appendChild(overlay);
+  
+  // Trigger transition
+  setTimeout(() => {
+    overlay.classList.add('active');
+  }, 100);
+  
+  // Navigate after transition
+  setTimeout(() => {
+    window.location.href = `/refertazione/index.html?matricola=${matricola}`;
+  }, 1500);
+}
+
+function startRecordingSuccessTransition(matricola) {
+  // Create transition overlay
+  const overlay = document.createElement('div');
+  overlay.className = 'page-transition-overlay';
+  overlay.innerHTML = `
+    <div class="transition-content">
+      <h2>🎤 Registrazione Completata</h2>
+      <p>Attivazione sistema di trascrizione vocale<span class="loading-dots"><span></span><span></span><span></span></span></p>
+    </div>
+  `;
+  
+  document.body.appendChild(overlay);
+  
+  // Trigger transition
+  setTimeout(() => {
+    overlay.classList.add('active');
+  }, 100);
+  
+  // Navigate after transition
+  setTimeout(() => {
+    window.location.href = `/refertazione/index.html?matricola=${matricola}`;
+  }, 1500);
+}
+
+// Home button functionality
+document.getElementById('homePageBtn').addEventListener('click', function() {
+  // Redirect to the main application (port 5001)
+  window.location.href = '/';
+});
+
+</script>
+
+</body>
+</html>
