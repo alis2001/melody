@@ -13,6 +13,8 @@ import gc
 import atexit
 from contextlib import contextmanager
 import weakref
+import shutil
+from datetime import datetime
 from flask_cors import CORS
 from flask import Flask, render_template, request, jsonify, redirect, url_for, session
 from flask_socketio import SocketIO, emit, join_room
@@ -31,6 +33,235 @@ except ImportError:
     psutil = None
 
 load_dotenv()
+
+###############################
+#  TRAINING DATA PRESERVATION LAYER
+#  - No changes to existing logic
+#  - Just saves organized copies for ML training
+###############################
+
+# Training data directory structure
+TRAINING_DATA_ROOT = "training_data"
+
+def ensure_training_directories():
+    """Create training data directory structure"""
+    try:
+        os.makedirs(TRAINING_DATA_ROOT, exist_ok=True)
+        print(f"✅ Training data directory ready: {TRAINING_DATA_ROOT}")
+    except Exception as e:
+        print(f"❌ Error creating training directories: {e}")
+
+def get_doctor_training_dir(matricola):
+    """Get or create training directory for specific doctor"""
+    doctor_dir = os.path.join(TRAINING_DATA_ROOT, f"matricola_{matricola}")
+    
+    # Create subdirectories for this doctor
+    subdirs = [
+        "audio_files",          # Raw audio files with transcriptions
+        "conversations",        # Complete conversation transcripts
+        "reports",             # Generated medical reports  
+        "sessions"             # Session metadata and summaries
+    ]
+    
+    for subdir in subdirs:
+        os.makedirs(os.path.join(doctor_dir, subdir), exist_ok=True)
+    
+    return doctor_dir
+
+def save_training_audio(matricola, wav_filename, sentence, speaker, similarity_score):
+    """Save audio file for training - CALLED BEFORE DELETION"""
+    try:
+        if not os.path.exists(wav_filename):
+            return None
+            
+        # Get doctor's training directory
+        doctor_dir = get_doctor_training_dir(matricola)
+        audio_dir = os.path.join(doctor_dir, "audio_files")
+        
+        # Create unique filename with timestamp
+        timestamp = int(time.time() * 1000)
+        base_name = os.path.splitext(os.path.basename(wav_filename))[0]
+        
+        # Save audio file
+        training_audio_file = os.path.join(audio_dir, f"{timestamp}_{base_name}.wav")
+        shutil.copy2(wav_filename, training_audio_file)
+        
+        # Save metadata alongside audio
+        metadata = {
+            "original_file": os.path.basename(wav_filename),
+            "training_file": os.path.basename(training_audio_file),
+            "transcription": sentence,
+            "speaker": speaker,
+            "similarity_score": similarity_score,
+            "doctor_matricola": matricola,
+            "timestamp": datetime.now().isoformat(),
+            "session_date": datetime.now().strftime("%Y-%m-%d"),
+            "duration_seconds": get_audio_duration(wav_filename)
+        }
+        
+        metadata_file = os.path.join(audio_dir, f"{timestamp}_{base_name}.json")
+        with open(metadata_file, "w", encoding="utf-8") as f:
+            json.dump(metadata, f, indent=2, ensure_ascii=False)
+        
+        print(f"💾 Saved training audio: {os.path.basename(training_audio_file)}")
+        return training_audio_file
+        
+    except Exception as e:
+        print(f"❌ Error saving training audio: {e}")
+        return None
+
+def save_training_conversation(matricola, transcript_file, session_id):
+    """Save complete conversation transcript for training"""
+    try:
+        if not os.path.exists(transcript_file):
+            return None
+            
+        # Get doctor's training directory
+        doctor_dir = get_doctor_training_dir(matricola)
+        conversations_dir = os.path.join(doctor_dir, "conversations")
+        
+        # Create training conversation file
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        training_conversation_file = os.path.join(conversations_dir, f"{timestamp}_{session_id}_conversation.txt")
+        
+        # Copy transcript file
+        shutil.copy2(transcript_file, training_conversation_file)
+        
+        # Save conversation metadata
+        metadata = {
+            "original_transcript": os.path.basename(transcript_file),
+            "training_file": os.path.basename(training_conversation_file),
+            "doctor_matricola": matricola,
+            "session_id": session_id,
+            "timestamp": datetime.now().isoformat(),
+            "session_date": datetime.now().strftime("%Y-%m-%d")
+        }
+        
+        metadata_file = os.path.join(conversations_dir, f"{timestamp}_{session_id}_conversation.json")
+        with open(metadata_file, "w", encoding="utf-8") as f:
+            json.dump(metadata, f, indent=2, ensure_ascii=False)
+            
+        print(f"💾 Saved training conversation: {os.path.basename(training_conversation_file)}")
+        return training_conversation_file
+        
+    except Exception as e:
+        print(f"❌ Error saving training conversation: {e}")
+        return None
+
+def save_training_report_pair_enhanced(matricola, conversation_text, original_report, final_report, patient_cf, session_id, was_modified=False):
+    """
+    Save BOTH original AI-generated report AND final modified report
+    This allows comparison of AI vs human corrections for ML improvement
+    """
+    try:
+        # Get doctor's training directory
+        doctor_dir = get_doctor_training_dir(matricola)
+        reports_dir = os.path.join(doctor_dir, "reports")
+        
+        # Create training pair file
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        training_pair_file = os.path.join(reports_dir, f"{timestamp}_{session_id}_pair.json")
+        
+        # Create ENHANCED training pair data with BOTH versions
+        training_pair = {
+            "doctor_matricola": matricola,
+            "patient_cf": patient_cf,
+            "session_id": session_id,
+            "conversation": conversation_text,
+            
+            # 🚨 NEW: Save BOTH original and final reports
+            "original_ai_report": original_report,        # AI-generated report
+            "final_report": final_report,                 # Doctor's final version
+            "was_modified_by_doctor": was_modified,       # True if doctor edited
+            
+            # Analysis fields for ML training
+            "modification_analysis": {
+                "original_length": len(original_report.split()) if original_report else 0,
+                "final_length": len(final_report.split()) if final_report else 0,
+                "length_change": (len(final_report.split()) - len(original_report.split())) if (original_report and final_report) else 0,
+                "substantial_changes": was_modified and (abs(len(final_report) - len(original_report)) > 100),
+                "needs_human_review": was_modified  # Flag for training data quality
+            },
+            
+            "timestamp": datetime.now().isoformat(),
+            "session_date": datetime.now().strftime("%Y-%m-%d"),
+            "conversation_length": len(conversation_text.split()) if conversation_text else 0
+        }
+        
+        # Save enhanced training pair
+        with open(training_pair_file, "w", encoding="utf-8") as f:
+            json.dump(training_pair, f, indent=2, ensure_ascii=False)
+            
+        print(f"💾 Saved ENHANCED training report pair: {os.path.basename(training_pair_file)}")
+        print(f"    Original AI report: {len(original_report)} chars")
+        print(f"    Final report: {len(final_report)} chars") 
+        print(f"    Modified by doctor: {was_modified}")
+        
+        return training_pair_file
+        
+    except Exception as e:
+        print(f"❌ Error saving enhanced training report pair: {e}")
+        return None
+
+def save_session_summary(matricola, session_id, summary_data):
+    """Save session summary and metadata"""
+    try:
+        # Get doctor's training directory
+        doctor_dir = get_doctor_training_dir(matricola)
+        sessions_dir = os.path.join(doctor_dir, "sessions")
+        
+        # Create session summary file
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        session_file = os.path.join(sessions_dir, f"{timestamp}_{session_id}_summary.json")
+        
+        # Add metadata to summary
+        summary_data.update({
+            "doctor_matricola": matricola,
+            "session_id": session_id,
+            "timestamp": datetime.now().isoformat(),
+            "session_date": datetime.now().strftime("%Y-%m-%d")
+        })
+        
+        # Save session summary
+        with open(session_file, "w", encoding="utf-8") as f:
+            json.dump(summary_data, f, indent=2, ensure_ascii=False)
+            
+        print(f"💾 Saved session summary: {os.path.basename(session_file)}")
+        return session_file
+        
+    except Exception as e:
+        print(f"❌ Error saving session summary: {e}")
+        return None
+
+def get_audio_duration(wav_file):
+    """Get duration of audio file in seconds"""
+    try:
+        audio, sr = librosa.load(wav_file, sr=None)
+        return len(audio) / sr
+    except:
+        return 0
+
+def cleanup_old_training_data(days_to_keep=365):
+    """Clean up training data older than specified days"""
+    try:
+        cutoff_time = time.time() - (days_to_keep * 24 * 3600)
+        count = 0
+        
+        for root, dirs, files in os.walk(TRAINING_DATA_ROOT):
+            for file in files:
+                file_path = os.path.join(root, file)
+                if os.path.getctime(file_path) < cutoff_time:
+                    os.remove(file_path)
+                    count += 1
+                    
+        if count > 0:
+            print(f"🗑️  Cleaned up {count} old training files (>{days_to_keep} days)")
+            
+    except Exception as e:
+        print(f"❌ Error cleaning old training data: {e}")
+
+# Initialize training directories on startup
+ensure_training_directories()
 
 ###############################
 #  MEMORY AND RESOURCE MANAGEMENT
@@ -182,8 +413,8 @@ def is_valid_session(matricola):
         
         session_data = sessions[matricola]
         created_at = session_data.get("created_at", 0)
-        # Reduced session timeout to 4 hours instead of 6
-        if time.time() - created_at > 4 * 3600:
+        # Extended session timeout to 12 hours for long medical visits
+        if time.time() - created_at > 12 * 3600:  # 12 hours for long medical visits
             return False
     
     return True
@@ -196,9 +427,14 @@ def cleanup_session(matricola):
         if matricola in sessions:
             session_data = sessions[matricola]
             
-            # Close and clean transcript file
+            # 💾 SAVE CONVERSATION FOR TRAINING BEFORE CLEANUP
+            transcript_file = session_data.get("transcript_file")
+            if transcript_file and os.path.exists(transcript_file):
+                session_id = session_data.get("session_id", f"{matricola}_{int(time.time())}")
+                save_training_conversation(matricola, transcript_file, session_id)
+            
+            # Close and clean transcript file (after saving for training)
             try:
-                transcript_file = session_data.get("transcript_file")
                 if transcript_file and os.path.exists(transcript_file):
                     os.remove(transcript_file)
                     print(f"Deleted transcript: {transcript_file}")
@@ -343,7 +579,7 @@ def genera_report_medico(transcript_file):
         return f"Errore di connessione al servizio locale: {e}"
 
 def process_sentence_and_emit(matricola, sid, wav_filename, sentence):
-    """FIXED: Enhanced audio processing with memory management"""
+    """ENHANCED: Audio processing with training data preservation"""
     
     with memory_monitor(f"process_sentence_{matricola}"):
         with sessions_lock:
@@ -404,6 +640,10 @@ def process_sentence_and_emit(matricola, sid, wav_filename, sentence):
                         print("❌ Error in diarization:", e)
                         voice = "Dottore"
 
+            # 💾 SAVE AUDIO FOR TRAINING BEFORE DELETION
+            if sentence.strip():  # Only save if there's actual content
+                save_training_audio(matricola, wav_filename, sentence, voice, similarity)
+
             # Write to transcript with file locking
             line = f"Similarity: {similarity:.3f} | {os.path.basename(wav_filename)}: {voice}: {sentence}"
             print("Appending line to transcript:", line)
@@ -422,11 +662,11 @@ def process_sentence_and_emit(matricola, sid, wav_filename, sentence):
         except Exception as e:
             print(f"Error in process_sentence_and_emit: {e}")
         finally:
-            # 🚨 CRITICAL FIX: Move file cleanup to the VERY END
+            # 🚨 CRITICAL FIX: Move file cleanup to the VERY END (after training data save)
             try:
                 if os.path.exists(wav_filename):
                     os.remove(wav_filename)
-                    print(f"🗑️  Cleaned up {wav_filename}")
+                    print(f"🗑️  Cleaned up {wav_filename} (after training data preserved)")
             except Exception as e:
                 print(f"Error cleaning up {wav_filename}: {e}")
             
@@ -493,6 +733,7 @@ def handle_connect(auth):
                 "default_emb": default_emb,
                 "matricola": matricola,
                 "transcript_file": transcript_file,
+                "session_id": session_id,  # 💾 Store session_id for training data
                 "partial_transcript": "",
                 "audio_buffer": b"",
                 "sentence_count": 0,
@@ -677,15 +918,37 @@ def handle_save_session(data):
     client = sessions[matricola]
     mat = client["matricola"]
     patientCF = data.get("patientCF", "unknown")
-    report_text = data.get("report", "")
+    
+    # 🚨 NEW: Get BOTH original and final reports
+    original_report = data.get("original_report", "")      # AI-generated report
+    final_report = data.get("report", "")                  # Final version (possibly modified)
+    was_modified = data.get("was_modified", False)         # Whether doctor modified it
+    
     timestamp = time.strftime("%Y%m%d_%H%M%S")
     filename = f"{mat}_{timestamp}_{patientCF}.txt"
     dest_path = os.path.join(SESSION_REPORTS_DIR, filename)
 
     try:
         convo = estrai_conversazione_medica(client["transcript_file"])
+        
+        # 💾 SAVE ENHANCED CONVERSATION-REPORT PAIR FOR TRAINING
+        session_id = client.get("session_id", f"{mat}_{int(time.time())}")
+        save_training_report_pair_enhanced(mat, convo, original_report, final_report, patientCF, session_id, was_modified)
+        
+        # Save session summary for training
+        summary_data = {
+            "patient_cf": patientCF,
+            "conversation_lines": len(convo.split('\n')) if convo else 0,
+            "original_report_generated": bool(original_report),
+            "final_report_saved": bool(final_report),
+            "doctor_modified_report": was_modified,
+            "session_duration": time.time() - client.get("created_at", time.time())
+        }
+        save_session_summary(mat, session_id, summary_data)
+        
+        # Save session normally (using final report)
         with open(dest_path, "w", encoding="utf-8") as f:
-            f.write(f"Conversazione:\n{convo}\n\nReport:\n{report_text}")
+            f.write(f"Conversazione:\n{convo}\n\nReport:\n{final_report}")
         print(f"Session saved as: {filename}")
         
         # FIRST emit success message, THEN clean up with delay
@@ -834,7 +1097,7 @@ def serve_index():
         if mat in sessions:
             session_data = sessions[mat]
             created_at = session_data.get("created_at", 0)
-            if time.time() - created_at > 4 * 3600:  # 4 hours
+            if time.time() - created_at > 12 * 3600:  # 12 hours for long medical visits
                 cleanup_session(mat)
                 return redirect(url_for("doctor_setup", error="session_expired"))
     
@@ -871,9 +1134,13 @@ def save_session_http():
     
     matricola = data.get("matricola", "").strip()
     patientCF = data.get("patientCF", "").strip()
-    report_text = data.get("report", "")
     
-    if not matricola or not patientCF or not report_text:
+    # 🚨 NEW: Get BOTH original and final reports
+    original_report = data.get("original_report", "")
+    final_report = data.get("report", "")
+    was_modified = data.get("was_modified", False)
+    
+    if not matricola or not patientCF or not final_report:
         return jsonify({"success": False, "error": "Missing required fields"}), 400
     
     # Find the session
@@ -889,8 +1156,25 @@ def save_session_http():
     
     try:
         convo = estrai_conversazione_medica(client["transcript_file"])
+        
+        # 💾 SAVE ENHANCED CONVERSATION-REPORT PAIR FOR TRAINING
+        session_id = client.get("session_id", f"{matricola}_{int(time.time())}")
+        save_training_report_pair_enhanced(matricola, convo, original_report, final_report, patientCF, session_id, was_modified)
+        
+        # Save session summary for training
+        summary_data = {
+            "patient_cf": patientCF,
+            "conversation_lines": len(convo.split('\n')) if convo else 0,
+            "original_report_generated": bool(original_report),
+            "final_report_saved": bool(final_report),
+            "doctor_modified_report": was_modified,
+            "session_duration": time.time() - client.get("created_at", time.time())
+        }
+        save_session_summary(matricola, session_id, summary_data)
+        
+        # Save session normally (using final report)
         with open(dest_path, "w", encoding="utf-8") as f:
-            f.write(f"Conversazione:\n{convo}\n\nReport:\n{report_text}")
+            f.write(f"Conversazione:\n{convo}\n\nReport:\n{final_report}")
         
         print(f"HTTP Session saved as: {filename}")
         
@@ -906,7 +1190,7 @@ def save_session_http():
     except Exception as e:
         print("Error saving session via HTTP:", e)
         return jsonify({"success": False, "error": str(e)}), 500
-    
+
 @app.route("/refertazione/check_session", methods=["GET"])
 def check_session():
     """Check if session is still valid"""
@@ -927,7 +1211,7 @@ def check_session():
         # If session exists, check if it's expired
         session_data = sessions[mat]
         created_at = session_data.get("created_at", 0)
-        if time.time() - created_at > 4 * 3600:  # 4 hours
+        if time.time() - created_at > 12 * 3600:  # 12 hours for long medical visits
             cleanup_session(mat)
             return jsonify({"valid": False, "redirect": True, "reason": "session_expired"})
     
@@ -966,18 +1250,18 @@ def cleanup_expired_sessions():
             disconnected_sessions = []
             
             with sessions_lock:
-                # Check for expired sessions (4+ hours old instead of 6)
+                # Check for expired sessions (12+ hours old for long medical visits)
                 for mat, data in list(sessions.items()):
                     created = data.get("created_at", now)
-                    if now - created > 4 * 3600:  # 4 hours
+                    if now - created > 12 * 3600:  # 12 hours for long medical visits
                         expired_sessions.append(mat)
                 
-                # Check for disconnected sessions (no heartbeat for 5+ minutes)
+                # Check for disconnected sessions (no heartbeat for 30+ minutes for medical sessions)
                 for mat in list(sessions.keys()):
                     if mat not in active_connections:
-                        # Session exists but no active connection - mark for cleanup after 5 min
+                        # Session exists but no active connection - mark for cleanup after 30 min
                         continue
-                    elif now - active_connections[mat]['last_seen'] > 300:  # 5 minutes
+                    elif now - active_connections[mat]['last_seen'] > 1800:  # 30 minutes for medical sessions
                         disconnected_sessions.append(mat)
 
             # Clean up expired and disconnected sessions
@@ -988,17 +1272,20 @@ def cleanup_expired_sessions():
             # Remove old wavs more frequently
             remove_temp_wavs(WAV_DIRECTORY)
             
+            # Clean up old training data (yearly)
+            cleanup_old_training_data(365)
+            
             # Force garbage collection every 5 minutes
             force_gc()
             
             # Log memory usage
             log_memory_usage("Periodic cleanup")
             
-            time.sleep(60)  # Run cleanup every minute
+            time.sleep(300)  # Run cleanup every 5 minutes (less aggressive)
             
         except Exception as e:
             print(f"Error in cleanup_expired_sessions: {e}")
-            time.sleep(60)
+            time.sleep(300)
 
 if __name__ == "__main__":
     # Start background cleanup task AFTER Flask starts
