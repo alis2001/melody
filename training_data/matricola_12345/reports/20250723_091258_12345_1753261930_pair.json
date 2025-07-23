@@ -1,0 +1,19 @@
+{
+  "doctor_matricola": "12345",
+  "patient_cf": "sdglai01d21z224y",
+  "session_id": "12345_1753261930",
+  "conversation": "Dottore: settantanove ottantacinque",
+  "original_ai_report": "Mi dispiace, ma sembra che il testo fornito sia incompleto o non sia una conversazione clinica. Non riesco a comprendere l'espressione \"seventy nine eighty five\" e non ci sono altre informazioni esplicite fornite dal dottore.\n\nSe vuoi fornire la conversazione completa, sarò felice di aiutarti a estrarre i dati medici rilevanti e organizzarli nei due elenchi richiesti.",
+  "final_report": "Se vuoi fornire la conversazione completa, sarò felice di aiutarti a estrarre i dati medici rilevanti e organizzarli nei due elenchi richiesti.",
+  "was_modified_by_doctor": true,
+  "modification_analysis": {
+    "original_length": 57,
+    "final_length": 22,
+    "length_change": -35,
+    "substantial_changes": true,
+    "needs_human_review": true
+  },
+  "timestamp": "2025-07-23T09:12:58.078431",
+  "session_date": "2025-07-23",
+  "conversation_length": 3
+}

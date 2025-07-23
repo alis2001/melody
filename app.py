@@ -793,7 +793,8 @@ def handle_audio_chunk(data):
             
             if sentence:
                 client["sentence_count"] += 1
-                wav_filename = os.path.join(WAV_DIRECTORY, f"sentence_{sid}_{client['sentence_count']}.wav")
+                session_id = client.get("session_id", f"{matricola}_{int(time.time())}")
+                wav_filename = os.path.join(WAV_DIRECTORY, f"session_{session_id}_sentence_{client['sentence_count']}.wav")
                 
                 try:
                     with wave.open(wav_filename, "wb") as wf:
@@ -845,7 +846,8 @@ def handle_stop_recording():
                 sentence = result.get("text", "").strip()
                 if sentence:
                     client["sentence_count"] += 1
-                    wav_filename = os.path.join(WAV_DIRECTORY, f"sentence_{sid}_{client['sentence_count']}.wav")
+                    session_id = client.get("session_id", f"{matricola}_{int(time.time())}")
+                    wav_filename = os.path.join(WAV_DIRECTORY, f"session_{session_id}_sentence_{client['sentence_count']}.wav")
                     
                     try:
                         with wave.open(wav_filename, "wb") as wf:

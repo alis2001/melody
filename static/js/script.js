@@ -76,7 +76,6 @@ const stopBtn = document.getElementById("stopBtn");
 recordBtn.classList.add("visible");
 stopBtn.classList.remove("visible");
 
-
 const finalDiv = document.getElementById("finalTranscriptions");
 const partialDiv = document.getElementById("partialTranscription");
 
@@ -110,7 +109,6 @@ function renderCleanTranscript(rawText) {
   }
 }
 
-
 // Initially hide items
 reportBtn.style.display = "none"; // Hide Generate Report button until recording stops
 reportTextarea.style.display = "none";
@@ -142,7 +140,12 @@ let processor;
 let recording = false;
 let pcmChunks = [];
 let conversationLines = [];  // Updated from the transcript polling
-let report = "";
+
+// 🚨 ENHANCED: Track both original and current report versions
+let originalAIReport = "";     // The original AI-generated report (never changes)
+let currentReport = "";        // Current report (may be modified by doctor)
+let reportWasModified = false; // Flag to track if doctor made changes
+
 let autoScroll = false;
 // Variables for AJAX polling intervals
 let partialPollInterval, transcriptPollInterval;
@@ -264,7 +267,6 @@ recordBtn.addEventListener("click", async () => {
         conversationLines = [];
         renderCleanTranscript(data.transcript);
 
-
         if (autoScroll) {
           finalDiv.scrollTop = finalDiv.scrollHeight;
         }
@@ -313,7 +315,7 @@ stopBtn.addEventListener("click", () => {
 });
   
 //=================================================
-// Generate Medical Report via Socket.IO
+// 🚨 ENHANCED: Generate Medical Report - Track Original Version
 //=================================================
 reportBtn.addEventListener("click", async () => {
   console.log("Clicked Generate Medical Report");
@@ -332,9 +334,15 @@ reportBtn.addEventListener("click", async () => {
       return;
     }
     
-    report = data.report || "";
-    console.log("Report received:", report);
-    const formatted = report.replace(/\n/g, "<br>");
+    // 🚨 ENHANCED: Store both original and current versions
+    originalAIReport = data.report || "";        // Save original AI report (never changes)
+    currentReport = data.report || "";           // Current report (may be modified)
+    reportWasModified = false;                   // Reset modification flag
+    
+    console.log("Report received:", currentReport);
+    console.log("Original AI report saved for comparison:", originalAIReport);
+    
+    const formatted = currentReport.replace(/\n/g, "<br>");
     reportOutput.innerHTML = `<div class="report-content" style="background-color:#ffffcc; border:2px solid red; padding:10px;">${formatted}</div>`;
     reportOutput.style.display = "block";
     
@@ -349,7 +357,6 @@ reportBtn.addEventListener("click", async () => {
   }
 });
 
-  
 socket.on("report_generated", (data) => {
   console.log("report_generated event received:", data);
   loadingSpinner.style.display = "none";
@@ -360,9 +367,15 @@ socket.on("report_generated", (data) => {
     return;
   }
   
-  report = data.report || "";
-  console.log("Report received:", report);
-  const formatted = report.replace(/\n/g, "<br>");
+  // 🚨 ENHANCED: Store both original and current versions
+  originalAIReport = data.report || "";        // Save original AI report (never changes)
+  currentReport = data.report || "";           // Current report (may be modified)
+  reportWasModified = false;                   // Reset modification flag
+  
+  console.log("Report received:", currentReport);
+  console.log("Original AI report saved for comparison:", originalAIReport);
+  
+  const formatted = currentReport.replace(/\n/g, "<br>");
   reportOutput.innerHTML = `<div class="report-content" style="background-color:#ffffcc; border:2px solid red; padding:10px;">${formatted}</div>`;
   reportOutput.style.display = "block";
   
@@ -371,28 +384,84 @@ socket.on("report_generated", (data) => {
 });
   
 //=================================================
-// Modify the generated report
+// 🚨 ENHANCED: Modify Report - Track Changes
 //=================================================
 modifyReportBtn.addEventListener("click", () => {
   if (reportTextarea.style.display === "none") {
+    // User is starting to modify
     reportOutput.style.display = "none";
     reportTextarea.style.display = "block";
-    reportTextarea.value = report;
+    reportTextarea.value = currentReport;  // Use current report (may already be modified)
     modifyReportBtn.textContent = "Annulla Modifica";
+    
+    console.log("Doctor started modifying report");
   } else {
+    // User is canceling modification - check if they made changes
+    const textareaContent = reportTextarea.value.trim();
+    const currentReportTrimmed = currentReport.trim();
+    
+    if (textareaContent !== currentReportTrimmed) {
+      // Doctor made changes - ask if they want to save them
+      const saveChanges = confirm("Hai modificato il referto. Vuoi salvare le modifiche?");
+      if (saveChanges) {
+        // Save the changes
+        currentReport = textareaContent;
+        reportWasModified = true;
+        
+        // Update the display with modified content
+        const formatted = currentReport.replace(/\n/g, "<br>");
+        reportOutput.innerHTML = `<div class="report-content" style="background-color:#e8f5e8; border:2px solid #4caf50; padding:10px;"><div style="color:#2e7d32; font-weight:bold; margin-bottom:10px;">📝 Referto Modificato dal Dottore</div>${formatted}</div>`;
+        
+        console.log("Doctor saved modifications. Report was modified:", reportWasModified);
+        console.log("Original AI report:", originalAIReport.substring(0, 100) + "...");
+        console.log("Modified report:", currentReport.substring(0, 100) + "...");
+      }
+      // If they don't want to save, currentReport stays unchanged
+    }
+    
     reportTextarea.style.display = "none";
     reportOutput.style.display = "block";
     modifyReportBtn.textContent = "Modifica Referto";
   }
 });
+
+// 🚨 NEW: Track real-time changes in textarea to detect modifications
+reportTextarea.addEventListener('input', function() {
+  const textareaContent = this.value.trim();
+  const originalTrimmed = currentReport.trim();
+  
+  // Visual indicator that content has been modified
+  if (textareaContent !== originalTrimmed) {
+    this.style.borderColor = "#ff9800";
+    this.style.backgroundColor = "#fff3e0";
+  } else {
+    this.style.borderColor = "#ccc";
+    this.style.backgroundColor = "white";
+  }
+});
   
 //=================================================
-// Save Session via Socket.IO
+// 🚨 ENHANCED: Save Session - Send Both Report Versions
 //=================================================
 saveSessionButton.addEventListener("click", async () => {
-  const finalReportText = (reportTextarea.style.display === "block") ? reportTextarea.value : report;
+  // Determine final report text
+  let finalReportText;
+  
+  if (reportTextarea.style.display === "block") {
+    // User is currently editing - use textarea content and mark as modified
+    finalReportText = reportTextarea.value.trim();
+    if (finalReportText !== currentReport.trim()) {
+      currentReport = finalReportText;
+      reportWasModified = true;
+      console.log("Final changes detected during save");
+    }
+  } else {
+    // User is not editing - use current report
+    finalReportText = currentReport;
+  }
+  
   if (!finalReportText) {
-    alert("The report is empty.");
+    alert("Il referto è vuoto.");
     return;
   }
   
@@ -403,22 +472,30 @@ saveSessionButton.addEventListener("click", async () => {
   const patientCF = cfInput.value.trim();
   
   if (!validateMatricola(doctorMatricola)) {
-    alert("Matricola must be exactly 5 digits.");
+    alert("La matricola deve essere di esattamente 5 cifre.");
     return;
   }
   if (!validateCF(patientCF)) {
-    alert("Patient CF must be exactly 16 alphanumeric characters.");
+    alert("Il CF del paziente deve essere di esattamente 16 caratteri alfanumerici.");
     return;
   }
   
+  // 🚨 ENHANCED: Send both original and final reports + modification flag
   const payload = {
     conversation: conversationLines.join("\n"),
-    report: finalReportText,
+    original_report: originalAIReport,        // Original AI-generated report
+    report: finalReportText,                  // Final report (possibly modified)
+    was_modified: reportWasModified,          // Whether doctor modified it
     matricola: doctorMatricola,
     patientCF: patientCF
   };
   
-  console.log("Saving session via HTTP...");
+  console.log("Saving session with enhanced data:");
+  console.log("- Original AI report length:", originalAIReport.length);
+  console.log("- Final report length:", finalReportText.length);
+  console.log("- Was modified by doctor:", reportWasModified);
+  console.log("- Reports are different:", originalAIReport.trim() !== finalReportText.trim());
+  
   saveSessionButton.disabled = true;
   saveSessionButton.textContent = "Salvando...";
   
@@ -541,6 +618,13 @@ function showSuccessAnimation(message, filename) {
   document.body.appendChild(popup);
 }
 
+function showErrorMessage(message) {
+  alert(message); // Simple implementation - you can enhance this with a better UI
+}
+
+//=================================================
+// 🚨 ENHANCED: Reset Session - Clear Report Tracking
+//=================================================
 document.getElementById('resetSessionBtn').addEventListener('click', () => {
   // Show confirmation dialog in Italian
   const confirmReset = confirm(
@@ -598,11 +682,15 @@ document.getElementById('resetSessionBtn').addEventListener('click', () => {
     saveSessionButton.style.display = "none";
     saveSessionButton.textContent = "Salva Sessione";
     
-    // Reset global variables
+    // 🚨 ENHANCED: Reset report tracking variables
     conversationLines = [];
-    report = "";
+    originalAIReport = "";
+    currentReport = "";
+    reportWasModified = false;
     pcmChunks = [];
     autoScroll = false;
+    
+    console.log("Report tracking variables reset");
     
     // Notify server to reset session
     socket.emit('reset_session', { matricola: mat });

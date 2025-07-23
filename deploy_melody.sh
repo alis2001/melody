@@ -10,7 +10,7 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 CONTAINER_NAME="melody_production"
-IMAGE_NAME="melody:latest"
+IMAGE_NAME="alis2001/melody:latest"
 
 echo -e "${BLUE}=== Melody Deployment Script (Docker) ===${NC}"
 echo "Time: $(date)"
@@ -48,8 +48,9 @@ if [ $? -ne 0 ]; then
     exit 1
 fi
 
-# Create required directories
-mkdir -p session_reports transcripts default_voices
+# 🚨 UPDATED: Create required directories (added training_data)
+echo -e "\n${YELLOW}📁 Creating required directories...${NC}"
+mkdir -p session_reports transcripts default_voices training_data
 
 # Start container with resource limits
 echo -e "\n${YELLOW}🚀 Starting container with resource limits...${NC}"
@@ -69,6 +70,7 @@ docker run -d \
   -v $(pwd)/session_reports:/app/session_reports \
   -v $(pwd)/transcripts:/app/transcripts \
   -v $(pwd)/default_voices:/app/default_voices \
+  -v $(pwd)/training_data:/app/training_data \
   --log-driver json-file \
   --log-opt max-size=50m \
   --log-opt max-file=3 \
@@ -123,6 +125,20 @@ docker logs --tail 15 $CONTAINER_NAME
 
 echo -e "\n${GREEN}🎉 Deployment complete!${NC}"
 echo -e "${BLUE}Application available at: http://$(hostname -I | awk '{print $1}'):5002/refertazione/${NC}"
+echo
+echo -e "${YELLOW}🧪 Testing the Enhanced Report Tracking:${NC}"
+echo "1. Register a doctor voice at: http://localhost:5002/refertazione/doctor_setup"
+echo "2. Record a conversation"  
+echo "3. Generate a report (AI original)"
+echo "4. Modify the report (doctor changes)"
+echo "5. Save the session"
+echo "6. Check training_data/ folder for both versions"
+echo
+echo -e "${BLUE}📁 Training data will be saved in:${NC}"
+echo "• training_data/matricola_XXXXX/reports/ - Enhanced report pairs (original + modified)"
+echo "• training_data/matricola_XXXXX/audio_files/ - Audio training data"
+echo "• training_data/matricola_XXXXX/conversations/ - Full conversations"
+echo
 echo -e "${YELLOW}Monitor with: ./monitor_melody.sh${NC}"
 echo -e "${YELLOW}View logs with: docker logs -f $CONTAINER_NAME${NC}"
 echo -e "${YELLOW}Stop container: docker stop $CONTAINER_NAME${NC}"
