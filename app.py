@@ -235,10 +235,16 @@ def cleanup_session(matricola):
     print(f"Session cleaned up for matricola: {matricola}")
 
 ###############################
-#  Utility Functions
+#  Utility Functions - FIXED
 ###############################
 def trim_audio(wav_file, top_db=30):
+    """Fixed trim_audio function with proper error handling"""
     try:
+        # Check if file exists first
+        if not os.path.exists(wav_file):
+            print(f"❌ trim_audio: File {wav_file} does not exist!")
+            return wav_file
+            
         with memory_monitor("audio_trim"):
             audio, sr = librosa.load(wav_file, sr=SAMPLE_RATE)
             trimmed_audio, _ = librosa.effects.trim(audio, top_db=top_db)
@@ -246,29 +252,44 @@ def trim_audio(wav_file, top_db=30):
             sf.write(trimmed_file, trimmed_audio, sr)
             # Clean up audio data from memory
             del audio, trimmed_audio
+            print(f"✅ Audio trimmed: {wav_file} -> {trimmed_file}")
             return trimmed_file
     except Exception as e:
-        print(f"Error trimming {wav_file}: {e}")
+        print(f"❌ Error trimming {wav_file}: {e}")
         return wav_file
 
 def get_embedding(embedding_inference_local, wav_file):
+    """Fixed get_embedding function with proper error handling"""
     try:
+        # Check if file exists first
+        if not os.path.exists(wav_file):
+            print(f"❌ get_embedding: File {wav_file} does not exist!")
+            raise FileNotFoundError(f"File {wav_file} does not exist")
+            
         with memory_monitor("get_embedding"):
             trimmed_file = trim_audio(wav_file)
+            
+            # Check if trimmed file exists
+            if not os.path.exists(trimmed_file):
+                print(f"❌ get_embedding: Trimmed file {trimmed_file} does not exist!")
+                raise FileNotFoundError(f"Trimmed file {trimmed_file} does not exist")
+            
             emb = embedding_inference_local(trimmed_file)
             if emb.ndim == 2:
                 emb = np.mean(emb, axis=0)
             
-            # Clean up trimmed file
+            # Clean up trimmed file (but not the original)
             if trimmed_file != wav_file and os.path.exists(trimmed_file):
                 try:
                     os.remove(trimmed_file)
-                except:
-                    pass
+                    print(f"🗑️  Cleaned up trimmed file: {trimmed_file}")
+                except Exception as cleanup_error:
+                    print(f"Warning: Could not clean up {trimmed_file}: {cleanup_error}")
             
+            print(f"✅ Successfully extracted embedding from {wav_file}")
             return emb
     except Exception as e:
-        print(f"Error getting embedding: {e}")
+        print(f"❌ Error getting embedding from {wav_file}: {e}")
         raise
 
 def assign_speaker(embedding, default_embedding, threshold=THRESHOLD):
@@ -322,14 +343,21 @@ def genera_report_medico(transcript_file):
         return f"Errore di connessione al servizio locale: {e}"
 
 def process_sentence_and_emit(matricola, sid, wav_filename, sentence):
-    """Enhanced audio processing with memory management"""
+    """FIXED: Enhanced audio processing with memory management"""
     
     with memory_monitor(f"process_sentence_{matricola}"):
         with sessions_lock:
             session_data = sessions.get(matricola)
         
         if not session_data:
-            print("Session data not found for matricola", matricola)
+            print(f"❌ Session data not found for matricola {matricola}")
+            # Clean up the wav file since we can't process it
+            try:
+                if os.path.exists(wav_filename):
+                    os.remove(wav_filename)
+                    print(f"🗑️  Cleaned up orphaned file: {wav_filename}")
+            except:
+                pass
             return
         
         try:
@@ -338,39 +366,43 @@ def process_sentence_and_emit(matricola, sid, wav_filename, sentence):
 
             similarity = 0.0
             
-            # Load and process audio with resource monitoring
-            try:
-                audio, sr = librosa.load(wav_filename, sr=SAMPLE_RATE)
-                duration = len(audio) / SAMPLE_RATE
-                # Clean up audio data immediately
-                del audio
-            except Exception as e:
-                print(f"Error loading {wav_filename}: {e}")
+            # 🚨 CRITICAL FIX: Check if file exists BEFORE any processing
+            if not os.path.exists(wav_filename):
+                print(f"❌ Audio file {wav_filename} does not exist! Using fallback.")
+                voice = "Dottore"  # fallback
+                similarity = 0.0
                 duration = 0
-            finally:
-                # Always clean up the temporary file
-                try:
-                    if os.path.exists(wav_filename):
-                        os.remove(wav_filename)
-                except:
-                    pass
-
-            if duration < MIN_DURATION:
-                print(f"Audio too short ({duration:.2f}s); fallback => Dottore")
-                voice = "Dottore"
             else:
+                print(f"✅ Processing audio file: {wav_filename}")
+                
+                # Load and get duration first (but DON'T delete file yet)
                 try:
-                    with memory_monitor("embedding_inference"):
-                        emb = get_embedding(embedding_inference, wav_filename)
-                        voice_label, similarity = assign_speaker(emb, default_emb)
-                        voice = "Dottore" if voice_label == 0 else "Paziente"
-                        
-                        # Clean up embedding from memory
-                        del emb
-                        
+                    audio, sr = librosa.load(wav_filename, sr=SAMPLE_RATE)
+                    duration = len(audio) / SAMPLE_RATE
+                    # Clean up audio data from memory
+                    del audio
+                    print(f"✅ Loaded audio, duration: {duration:.2f}s")
                 except Exception as e:
-                    print("Error in diarization:", e)
+                    print(f"❌ Error loading {wav_filename}: {e}")
+                    duration = 0
+
+                if duration < MIN_DURATION:
+                    print(f"Audio too short ({duration:.2f}s); fallback => Dottore")
                     voice = "Dottore"
+                else:
+                    try:
+                        with memory_monitor("embedding_inference"):
+                            # File should still exist here for embedding extraction
+                            emb = get_embedding(embedding_inference, wav_filename)
+                            voice_label, similarity = assign_speaker(emb, default_emb)
+                            voice = "Dottore" if voice_label == 0 else "Paziente"
+                            
+                            # Clean up embedding from memory
+                            del emb
+                            
+                    except Exception as e:
+                        print("❌ Error in diarization:", e)
+                        voice = "Dottore"
 
             # Write to transcript with file locking
             line = f"Similarity: {similarity:.3f} | {os.path.basename(wav_filename)}: {voice}: {sentence}"
@@ -390,6 +422,14 @@ def process_sentence_and_emit(matricola, sid, wav_filename, sentence):
         except Exception as e:
             print(f"Error in process_sentence_and_emit: {e}")
         finally:
+            # 🚨 CRITICAL FIX: Move file cleanup to the VERY END
+            try:
+                if os.path.exists(wav_filename):
+                    os.remove(wav_filename)
+                    print(f"🗑️  Cleaned up {wav_filename}")
+            except Exception as e:
+                print(f"Error cleaning up {wav_filename}: {e}")
+            
             # Periodic memory cleanup
             session_count = len(sessions) if sessions else 0
             if session_count > 0 and session_count % 10 == 0:  # Every 10 processed sentences
