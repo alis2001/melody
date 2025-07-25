@@ -42,7 +42,7 @@ Report Medico:
 """
     try:
         risposta = ollama.chat(
-            model="llama3.1",
+            model="gemma3:12b",
             messages=[{
                 "role": "user",
                 "content": prompt
