@@ -56,6 +56,11 @@
       backdrop-filter: blur(12px);
       margin-top: 2rem;
     }
+
+    .chronic-integration {
+      border-left: 5px solid #007bff;
+      background: linear-gradient(90deg, rgba(0, 123, 255, 0.08) 0%, rgba(255, 255, 255, 0.7) 100%);
+    }
     
     @keyframes pageSlideIn {
       0% {
@@ -175,12 +180,12 @@
     }
 
     .line-doctor .speaker {
-      color: #2196f3; /* light blue */
+      color: #2196f3;
       font-weight: bold;
     }
 
     .line-patient .speaker {
-      color: #fb8c00; /* orange */
+      color: #fb8c00;
       font-weight: bold;
     }
 
@@ -247,6 +252,26 @@
       margin-top: 20px;
       border-radius: 10px;
       background-color: #fffde7;
+    }
+
+    .chronic-auto-save {
+      background: linear-gradient(135deg, #e8f5e8, #f1f8e9);
+      border: 3px solid #28a745;
+      text-align: center;
+      padding: 20px;
+      margin-top: 20px;
+      border-radius: 15px;
+    }
+
+    .chronic-auto-save h3 {
+      color: #155724;
+      margin: 0 0 10px 0;
+    }
+
+    .chronic-auto-save p {
+      color: #155724;
+      margin: 0;
+      font-size: 1rem;
     }
 
     label {
@@ -345,13 +370,13 @@
       transform: scale(1.08) !important;
       box-shadow: 0 8px 25px rgba(52, 152, 219, 0.5) !important;
     }
-
   </style>
 </head>
 <body>
+  
   <!-- Back button - TOP LEFT -->
   <button id="backToDoctorSetup">
-    ← Torna Indietro
+    🏠 Home
   </button>
 
   <!-- Reset button - TOP RIGHT -->
@@ -359,7 +384,7 @@
     🔄 Resetta Sessione
   </button>
 
-  <div class="card">
+  <div class="card" id="main-card">
     <h1>Trascrizione Vocale in Tempo Reale</h1>
 
     <div id="recordControls">
@@ -389,6 +414,12 @@
       <label>Codice Fiscale Paziente:</label>
       <input type="text" id="cf" />
     </div>
+
+    <!-- Chronic auto-save section -->
+    <div id="chronicAutoSave" class="chronic-auto-save" style="display:none;">
+      <h3>Ready to Save to Chronic Platform</h3>
+      <p>Patient and doctor information automatically configured</p>
+    </div>
   </div>
 
   <!-- Socket.IO -->
@@ -396,13 +427,108 @@
   <!-- Your JS logic remains untouched -->
   <script src="/refertazione/static/js/script.js"></script>
 
-  <!-- Add only the back button functionality -->
   <script>
-    // Backward button functionality
-    document.getElementById('backToDoctorSetup').addEventListener('click', function() {
-      // Redirect to doctor_setup without clearing session
-      window.location.href = '/refertazione/doctor_setup';
+    let isChronicIntegration = false;
+    let chronicContext = {};
+
+    // Check for Chronic integration on page load
+    window.addEventListener('DOMContentLoaded', function() {
+      checkChronicIntegration();
+      setupChronicAutoSave();
     });
-  </script>
+
+    function checkChronicIntegration() {
+      fetch('/refertazione/check_chronic_context')
+      .then(response => response.json())
+      .then(data => {
+        if (data.is_chronic_integration) {
+          isChronicIntegration = true;
+          chronicContext = data;
+          
+          // Add chronic styling
+          document.getElementById('main-card').classList.add('chronic-integration');
+          
+          console.log('[CHRONIC] Integration detected:', data);
+        }
+      })
+      .catch(err => {
+        console.log('Standalone mode - no Chronic integration');
+        isChronicIntegration = false;
+      });
+    }
+
+    function setupChronicAutoSave() {
+      // Watch for save section to appear
+      const observer = new MutationObserver((mutations) => {
+        mutations.forEach((mutation) => {
+          if (mutation.type === 'attributes' && mutation.attributeName === 'style') {
+            const saveSection = document.getElementById('saveInfoSection');
+            const saveButton = document.getElementById('saveSessionButton');
+            
+            if (saveSection && saveSection.style.display !== 'none' && isChronicIntegration) {
+              console.log('[CHRONIC] Save section appeared - activating auto-save mode');
+              
+              // Hide manual input section entirely
+              saveSection.style.display = 'none';
+              
+              // Show chronic auto-save message - IN ITALIAN
+              const chronicAutoSave = document.getElementById('chronicAutoSave');
+              chronicAutoSave.style.display = 'block';
+              chronicAutoSave.querySelector('h3').textContent = 'Pronto per Salvare su Piattaforma Chronic';
+              chronicAutoSave.querySelector('p').textContent = 'Informazioni paziente e dottore configurate automaticamente';
+              
+              // Auto-enable save button
+              if (saveButton) {
+                saveButton.disabled = false;
+                saveButton.textContent = 'Salva su Piattaforma Chronic';
+                console.log('[CHRONIC] Save button enabled for auto-save');
+              }
+            }
+          }
+        });
+      });
+
+      // Observe the save section for changes
+      const saveSection = document.getElementById('saveInfoSection');
+      if (saveSection) {
+        observer.observe(saveSection, {
+          attributes: true,
+          attributeFilter: ['style']
+        });
+      }
+
+      // Also observe the body for dynamic elements
+      observer.observe(document.body, { 
+        childList: true, 
+        subtree: true,
+        attributes: true,
+        attributeFilter: ['style']
+      });
+    }
+
+    // Home button functionality - FIXED LOGIC
+    document.getElementById('backToDoctorSetup').addEventListener('click', function() {
+      if (isChronicIntegration) {
+        // Return to Chronic Platform
+        console.log('[CHRONIC] Home button clicked - returning to Chronic');
+        fetch('/refertazione/get_return_url')
+        .then(response => response.json())
+        .then(data => {
+          if (data.return_url) {
+            window.location.href = data.return_url;
+          } else {
+            window.location.href = 'http://localhost:3010';
+          }
+        })
+        .catch(err => {
+          console.error('Error getting return URL:', err);
+          window.location.href = 'http://localhost:3010';
+        });
+      } else {
+        // Normal doctor setup
+        window.location.href = '/refertazione/doctor_setup';
+      }
+    });
+</script>
 </body>
 </html>

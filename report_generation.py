@@ -28,7 +28,7 @@ Organizza il report in queste categorie:
    - Parametro | Valore | Note
 
 2. Risultati esami strumentali:
-   - Tipo esame | Risultato | Note
+   - Tipo esame | Risultato | Notehow to be a businessman
 
 
 Usa solo informazioni esplicite dal Dottore. Non includere informazioni del paziente.

@@ -1,0 +1,2 @@
+Similarity: 0.363 | session_12345_1754309536_sentence_1.wav: Dottore: novantotto quarantasette
+Similarity: 0.662 | session_12345_1754309536_sentence_2.wav: Dottore: guardando diciamo il referto mi sembra che mancano i globuli bianchi globuli rossi

@@ -1,0 +1,21 @@
+Similarity: 0.036 | session_12345_1753793709_sentence_1.wav: Paziente: stile energico
+Similarity: -0.035 | session_12345_1753793709_sentence_2.wav: Paziente: dodici novantuno
+Similarity: 0.393 | session_12345_1753793709_sentence_3.wav: Dottore: sei settantaquattro ottantacinque
+Similarity: 0.039 | session_12345_1753793709_sentence_4.wav: Paziente: sedici
+Similarity: -0.016 | session_12345_1753793709_sentence_5.wav: Paziente: rimosso
+Similarity: 0.289 | session_12345_1753793709_sentence_6.wav: Dottore: novantanove ottantadue
+Similarity: -0.088 | session_12345_1753793709_sentence_7.wav: Paziente: secondo me
+Similarity: 0.040 | session_12345_1753793709_sentence_8.wav: Paziente: come
+Similarity: 0.017 | session_12345_1753793709_sentence_9.wav: Paziente: presente
+Similarity: 0.012 | session_12345_1753793709_sentence_10.wav: Paziente: sì
+Similarity: -0.008 | session_12345_1753793709_sentence_11.wav: Paziente: tutti gli eventi
+Similarity: 0.013 | session_12345_1753793709_sentence_12.wav: Paziente: lo
+Similarity: 0.084 | session_12345_1753793709_sentence_13.wav: Paziente: bene
+Similarity: -0.057 | session_12345_1753793709_sentence_14.wav: Paziente: home
+Similarity: 0.004 | session_12345_1753793709_sentence_15.wav: Paziente: michael
+Similarity: -0.018 | session_12345_1753793709_sentence_16.wav: Paziente: signora
+Similarity: -0.002 | session_12345_1753793709_sentence_17.wav: Paziente: sito
+Similarity: 0.082 | session_12345_1753793709_sentence_18.wav: Paziente: novantanove ottanta
+Similarity: 0.166 | session_12345_1753793709_sentence_19.wav: Paziente: novantanove ottanta
+Similarity: 0.393 | session_12345_1753793709_sentence_20.wav: Dottore: settantaquattro ottantadue
+Similarity: 0.095 | session_12345_1753793709_sentence_21.wav: Paziente: dodici novanta

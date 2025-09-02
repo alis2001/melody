@@ -919,9 +919,16 @@ def handle_save_session(data):
 
     client = sessions[matricola]
     mat = client["matricola"]
-    patientCF = data.get("patientCF", "unknown")
     
-    # 🚨 NEW: Get BOTH original and final reports
+    # 🚨 ENHANCED: Use stored context if available (from Chronic integration)
+    if session.get('platform') == 'chronic':
+        patientCF = session.get('patient_cf', data.get("patientCF", "unknown"))
+        print(f"[INTEGRATION] Using stored patient CF from Chronic: {patientCF}")
+    else:
+        patientCF = data.get("patientCF", "unknown")
+        print(f"[STANDALONE] Using patient CF from form: {patientCF}")
+    
+    # Get BOTH original and final reports
     original_report = data.get("original_report", "")      # AI-generated report
     final_report = data.get("report", "")                  # Final version (possibly modified)
     was_modified = data.get("was_modified", False)         # Whether doctor modified it
@@ -944,7 +951,8 @@ def handle_save_session(data):
             "original_report_generated": bool(original_report),
             "final_report_saved": bool(final_report),
             "doctor_modified_report": was_modified,
-            "session_duration": time.time() - client.get("created_at", time.time())
+            "session_duration": time.time() - client.get("created_at", time.time()),
+            "platform": session.get('platform', 'standalone')
         }
         save_session_summary(mat, session_id, summary_data)
         
@@ -953,8 +961,19 @@ def handle_save_session(data):
             f.write(f"Conversazione:\n{convo}\n\nReport:\n{final_report}")
         print(f"Session saved as: {filename}")
         
-        # FIRST emit success message, THEN clean up with delay
-        emit("session_saved", {"success": True, "filename": filename}, room=sid)
+        # 🚨 ENHANCED: Handle return to Chronic if applicable
+        if session.get('platform') == 'chronic' and session.get('return_url'):
+            print(f"[INTEGRATION] Preparing return to Chronic platform")
+            # For now, just emit success - return flow can be enhanced later
+            emit("session_saved", {
+                "success": True, 
+                "filename": filename,
+                "chronic_integration": True,
+                "return_url": session.get('return_url')
+            }, room=sid)
+        else:
+            # Regular standalone save
+            emit("session_saved", {"success": True, "filename": filename}, room=sid)
         
         # Clean up session after small delay
         def delayed_cleanup():
@@ -1051,9 +1070,13 @@ def root():
 @app.route("/refertazione/doctor_setup")
 def doctor_setup():
     cf = request.args.get("cf", "")
+    matricola = request.args.get("matricola", "")  # Add this line
+    auto = request.args.get("auto", "")  # Add this line
+    
     session.permanent = True
     session['access_granted'] = True
-    return render_template("doctor_setup.html", cf=cf)
+    
+    return render_template("doctor_setup.html", cf=cf, matricola=matricola, auto=auto)
 
 @app.route("/refertazione/check_doctor", methods=["GET"])
 def check_doctor():
@@ -1135,14 +1158,21 @@ def save_session_http():
         return jsonify({"success": False, "error": "No data provided"}), 400
     
     matricola = data.get("matricola", "").strip()
-    patientCF = data.get("patientCF", "").strip()
     
-    # 🚨 NEW: Get BOTH original and final reports
+    # 🚨 ENHANCED: Use stored context if available (from Chronic integration)
+    if session.get('platform') == 'chronic':
+        patientCF = session.get('patient_cf', data.get("patientCF", "").strip())
+        print(f"[INTEGRATION] Using stored patient CF from Chronic: {patientCF}")
+    else:
+        patientCF = data.get("patientCF", "").strip()
+        print(f"[STANDALONE] Using patient CF from form: {patientCF}")
+    
+    # Get BOTH original and final reports
     original_report = data.get("original_report", "")
     final_report = data.get("report", "")
     was_modified = data.get("was_modified", False)
     
-    if not matricola or not patientCF or not final_report:
+    if not matricola or not final_report:
         return jsonify({"success": False, "error": "Missing required fields"}), 400
     
     # Find the session
@@ -1170,7 +1200,8 @@ def save_session_http():
             "original_report_generated": bool(original_report),
             "final_report_saved": bool(final_report),
             "doctor_modified_report": was_modified,
-            "session_duration": time.time() - client.get("created_at", time.time())
+            "session_duration": time.time() - client.get("created_at", time.time()),
+            "platform": session.get('platform', 'standalone')
         }
         save_session_summary(matricola, session_id, summary_data)
         
@@ -1187,7 +1218,17 @@ def save_session_http():
         
         threading.Thread(target=delayed_cleanup, daemon=True).start()
         
-        return jsonify({"success": True, "filename": filename})
+        # 🚨 ENHANCED: Handle return to Chronic if applicable
+        if session.get('platform') == 'chronic' and session.get('return_url'):
+            print(f"[INTEGRATION] Preparing return to Chronic platform")
+            return jsonify({
+                "success": True, 
+                "filename": filename,
+                "chronic_integration": True,
+                "return_url": session.get('return_url')
+            })
+        else:
+            return jsonify({"success": True, "filename": filename})
         
     except Exception as e:
         print("Error saving session via HTTP:", e)
@@ -1219,6 +1260,27 @@ def check_session():
     
     return jsonify({"valid": True})
 
+@app.route("/refertazione/get_return_url", methods=["GET"])
+def get_return_url():
+    """Get the return URL for navigation back to Chronic"""
+    return_url = session.get('return_url', '')
+    is_chronic = session.get('platform') == 'chronic'
+    
+    return jsonify({
+        "return_url": return_url,
+        "is_chronic_integration": is_chronic
+    })
+
+@app.route("/refertazione/check_chronic_context", methods=["GET"])
+def check_chronic_context():
+    """Check if current session is from Chronic integration"""
+    return jsonify({
+        "is_chronic_integration": session.get('platform') == 'chronic',
+        "patient_cf": session.get('patient_cf', ''),
+        "doctor_id": session.get('chronic_doctor_id', ''),
+        "return_url": session.get('return_url', '')
+    })
+
 @app.route("/refertazione/heartbeat", methods=["GET"])
 def heartbeat():
     memory_usage = log_memory_usage("heartbeat")
@@ -1228,6 +1290,46 @@ def heartbeat():
         "sessions": len(sessions),
         "connections": len(active_connections)
     })
+
+@app.route("/refertazione/voice_workflow", methods=["GET"])
+def voice_workflow():
+    """Entry point for Chronic platform integration - SEAMLESS FLOW"""
+    doctor_id = request.args.get("doctor_id")
+    patient_cf = request.args.get("patient_cf") 
+    return_url = request.args.get("return_url")
+    platform = request.args.get("platform", "chronic")
+    
+    print(f"[INTEGRATION] Seamless voice workflow: doctor_id={doctor_id}, patient_cf={patient_cf}")
+    
+    # Map Chronic doctor ID to Melody matricola
+    doctor_mapping = {
+        'DOC001': '12345',  'DOC002': '12346', 
+        'DOC003': '12347',  'DOC004': '12348'
+    }
+    
+    matricola = doctor_mapping.get(doctor_id)
+    if not matricola:
+        return jsonify({"error": "Invalid doctor ID"}), 400
+    
+    # Store context in session for later use
+    session['return_url'] = return_url
+    session['patient_cf'] = patient_cf
+    session['chronic_doctor_id'] = doctor_id
+    session['platform'] = platform
+    session['auto_matricola'] = matricola
+    
+    # Check if voice file exists
+    voice_file = os.path.join(DEFAULT_VOICE_DIR, f"{matricola}.wav")
+    
+    if os.path.exists(voice_file):
+        # SEAMLESS: Voice exists, go directly to recording
+        print(f"[INTEGRATION] Voice exists, direct to recording: matricola={matricola}")
+        return redirect(url_for("serve_index") + f"?matricola={matricola}")
+    else:
+        # SEAMLESS: Voice doesn't exist, go to setup but auto-submit
+        print(f"[INTEGRATION] Voice missing, auto-setup mode: matricola={matricola}")
+        return redirect(url_for("doctor_setup") + f"?matricola={matricola}&auto_setup=true&cf={patient_cf}")
+
 
 @socketio.on("disconnecting_cleanup")
 def handle_manual_cleanup():
